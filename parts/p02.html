@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P02 The Value object and the expression graph — micrograd, mapped</title>
+<meta name="description" content="Karpathy wraps a float in a Value that remembers its children and its operation, then draws the expression as a graph — the picture backprop runs on." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>MICROGRAD&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#derivatives">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box wb mono">PART 02 · DERIVATIVES</span><span class="mono">19:09–32:10 · 13 min</span></div>
+  <h1>The Value object and the expression graph</h1>
+  <div class="authors">Andrej Karpathy · building micrograd (2022) · part 02 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Video</span><a href="https://youtu.be/VMj-3S1tku0?t=1149" target="_blank" rel="noopener">Start this part at 19:09 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Code</span><a href="https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/micrograd/micrograd_lecture_first_half_roughly.ipynb" target="_blank" rel="noopener">micrograd_lecture_first_half_roughly.ipynb · cells 7–9: the Value class, the a·b+c graph, draw_dot ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-1149">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> Backpropagation needs to walk an expression backwards, and a Python float has no memory of how it was computed. So Karpathy wraps one scalar in a class, overloads <span class="mono">+</span> and <span class="mono">*</span>, and has every result record the two operands that made it (<span class="mono">_prev</span>) and the symbol of the operation (<span class="mono">_op</span>). Thirteen lines of class plus a graphviz helper turn <span class="mono">a*b + c</span> into a picture: leaves on the left, the output on the right, arrows in the direction data flowed. Then he adds one empty field, <span class="mono">self.grad = 0.0</span>, and stops — the whole rest of the lecture is about filling that field in. The thing to remember: the graph is not a debugging aid, it <em>is</em> the data structure backprop consumes.</div>
+
+  <p class="lead">Part 1 ended with a definition of the derivative you could compute for any function you could call: bump an input by a tiny <span class="mono">h</span>, see how much the output moved, divide. That works, and for the three-input expression <span class="mono">d = a*b + c</span> it gave the right slopes (−3, 2, 1). It also does not scale — a neural net has thousands to billions of inputs, and re-running the forward pass once per input is hopeless. Backpropagation is the fix, and backpropagation needs something the numerical method does not: it needs to <em>look inside</em> the expression, at every intermediate value, and walk from the output back to the leaves applying the chain rule. Python's floats can't help with that. <span class="mono">a*b</span> returns <span class="mono">-6.0</span>, a number with no memory of <span class="mono">a</span>, of <span class="mono">b</span>, or of the fact that a multiplication happened. This part builds the object that does remember.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1149" target="_blank" rel="noopener">19:09</a> — The skeleton: a class that wraps one scalar, plus <span class="mono">__repr__</span> so the notebook prints something readable.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1221" target="_blank" rel="noopener">20:21</a> — <span class="mono">__add__</span>: Python's dunder protocol, and why <span class="mono">a + b</span> becomes <span class="mono">a.__add__(b)</span> with <span class="mono">b</span> as <span class="mono">other</span>.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1284" target="_blank" rel="noopener">21:24</a> — <span class="mono">__mul__</span>, and <span class="mono">a*b + c</span> reproducing 4.0 through two chained operator calls.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1346" target="_blank" rel="noopener">22:26</a> — The missing connective tissue: results need pointers back to the values that produced them.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1376" target="_blank" rel="noopener">22:56</a> — <span class="mono">_children</span> as a tuple in the signature, <span class="mono">_prev</span> as a set on the instance — and Karpathy's shrug about why.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1438" target="_blank" rel="noopener">23:58</a> — <span class="mono">_op</span>: the string that says which operation made this node, empty for leaves.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1500" target="_blank" rel="noopener">25:00</a> — <span class="mono">draw_dot</span> pasted in: <span class="mono">trace</span> collects nodes and edges, graphviz renders them left to right.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1562" target="_blank" rel="noopener">26:02</a> — The fake op nodes: little circles that are not Values, inserted so the picture reads.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1625" target="_blank" rel="noopener">27:05</a> — <span class="mono">label</span>, and naming the intermediate <span class="mono">e = a*b</span> so the drawing is legible.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1685" target="_blank" rel="noopener">28:05</a> — One layer deeper: <span class="mono">f = -2.0</span>, <span class="mono">L = d * f</span>, output −8. The running example for the next twenty minutes.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1745" target="_blank" rel="noopener">29:05</a> — Recap of the forward pass, and the statement of what backprop will compute: dL/d(everything).</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1836" target="_blank" rel="noopener">30:36</a> — <span class="mono">self.grad = 0.0</span> added to the constructor, and rendered into the graph beside the data.</li>
+  </ul>
+
+  <h2>A number that remembers</h2>
+  <p>The class starts as small as a class can be. <span class="mono">Value</span> holds one attribute, <span class="mono">data</span>, and one method, <span class="mono">__repr__</span>, which exists purely so that typing <span class="mono">a</span> in a notebook cell prints <span class="mono">Value(data=2.0)</span> instead of the default <span class="mono">&lt;__main__.Value object at 0x7f…&gt;</span>. That is not a detail worth much thought, but Karpathy calls it out around <a href="https://youtu.be/VMj-3S1tku0?t=1315" target="_blank" rel="noopener">21:55</a> because the entire lecture is conducted by reading printed output in a notebook — if you can't see what an object is, you can't teach with it.</p>
+
+  <p>The first real move is operator overloading. Python routes <span class="mono">a + b</span> to <span class="mono">type(a).__add__(a, b)</span>, so defining <span class="mono">__add__</span> on <span class="mono">Value</span> makes the <span class="mono">+</span> symbol mean whatever you want it to mean for these objects. Inside, the arithmetic itself is ordinary: <span class="mono">self.data + other.data</span> is float addition, because <span class="mono">.data</span> really is a Python float. The interesting part is the return value — not a float, but a <em>new</em> <span class="mono">Value</span> wrapping the result. Same for <span class="mono">__mul__</span>. With both defined, <span class="mono">a*b + c</span> works exactly as it reads: Python calls <span class="mono">a.__mul__(b)</span>, gets back a fresh <span class="mono">Value(-6.0)</span>, then calls <span class="mono">.__add__(c)</span> on <em>that</em>, and out comes <span class="mono">Value(4.0)</span> — the same 4.0 the plain-float version produced in Part 1. Nothing has been gained yet except the wrapper. The wrapper is the point: every operation now passes through code Karpathy controls, and code he controls can record things.</p>
+
+  <p>Two closely-related things get recorded. First, the operands. <span class="mono">__add__</span> passes <span class="mono">(self, other)</span> into the new node's constructor as <span class="mono">_children</span>, and the constructor stores <span class="mono">set(_children)</span> as <span class="mono">self._prev</span>. Now <span class="mono">d._prev</span> is <span class="mono">{Value(data=-6.0), Value(data=10.0)}</span> — the intermediate <span class="mono">a*b</span> and the leaf <span class="mono">c</span> — and you can follow those pointers down until you hit nodes whose <span class="mono">_prev</span> is empty. Those are the leaves: values you constructed directly rather than computed. Second, the operation. A node knowing <em>which</em> two values made it is not enough to differentiate it; you also need to know whether they were added or multiplied, because the local derivative differs. So a second field, <span class="mono">_op</span>, holds a one-character string: <span class="mono">'+'</span>, <span class="mono">'*'</span>, or the empty string for a leaf. Between <span class="mono">_prev</span> and <span class="mono">_op</span>, any node in the graph can answer "how was I made, and from what" — which is precisely the information the chain rule needs at that node, and nothing more.</p>
+
+  <p>The tuple-in, set-out asymmetry is the first place where the lecture is honestly rough. The parameter is a tuple for convenience at the call site; the attribute is a set. Asked why, Karpathy checks his own old code and comes up empty:</p>
+
+  <blockquote class="q off">This is how I did it in the original micrograd… I can't remember exactly the reason. I believe it was efficiency.<span class="cite">— <a href="https://youtu.be/VMj-3S1tku0?t=1376" target="_blank" rel="noopener">22:56</a></span></blockquote>
+
+  <p>Take him at his word and note the consequence, because it matters later: a set deduplicates. If you write <span class="mono">b = a + a</span>, the node's <span class="mono">_prev</span> contains <em>one</em> element, not two, since <span class="mono">self</span> and <span class="mono">other</span> are the same object. That does not break anything — traversal only needs to reach each distinct node once, and the per-operation gradient rule Karpathy writes in <a class="lnk" href="p04.html">P4</a> accumulates into <span class="mono">self.grad</span> and <span class="mono">other.grad</span> separately even when they alias — but it is the reason a node reached by two different paths is a real hazard and a node reached twice through the same edge is not. The published library keeps the same design: <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L10" target="_blank" rel="noopener"><span class="mono">self._prev = set(_children)</span></a> on line 10 of <span class="mono">engine.py</span>, four years and one refactor later.</p>
+
+  <h2>draw_dot: the picture the rest of the lecture runs on</h2>
+  <p>At <a href="https://youtu.be/VMj-3S1tku0?t=1500" target="_blank" rel="noopener">25:00</a> Karpathy pastes in about twenty lines of graphviz code and explicitly declines to explain them line by line — "slightly scary code," he calls it, and moves on. That is a reasonable call: nothing in <span class="mono">draw_dot</span> is load-bearing for understanding backpropagation. But it is worth reading once, because its structure mirrors the structure of <span class="mono">backward()</span> that arrives in P4.</p>
+
+  <p><span class="mono">trace(root)</span> is a depth-first walk that starts at the output and follows <span class="mono">_prev</span> pointers, collecting a set of nodes and a set of <span class="mono">(child, parent)</span> edges. The guard <span class="mono">if v not in nodes</span> makes it terminate and makes it visit each node once even in a diamond-shaped graph. That is the same recursion, with the same visited-set guard, that <span class="mono">build_topo</span> will use to produce a topological order in P4 — the only difference is that <span class="mono">build_topo</span> appends to a list <em>after</em> recursing into children, which is what makes the ordering come out right. If you understand <span class="mono">trace</span> here, you have already understood the traversal half of backprop.</p>
+
+  <p>The rendering half has one wrinkle worth naming. Each <span class="mono">Value</span> becomes a rectangular graphviz <span class="mono">record</span> node showing its label, data, and (after 30:36) grad. But the little circles marked <span class="mono">+</span> and <span class="mono">*</span> in the diagrams are <em>not</em> Values — they are extra nodes invented inside <span class="mono">draw_dot</span>, named <span class="mono">uid + n._op</span>, and wired so that the children point at the op node and the op node points at the result. Karpathy is clear about this at <a href="https://youtu.be/VMj-3S1tku0?t=1594" target="_blank" rel="noopener">26:34</a>: only the boxes are real objects. It matters when you start reading the pictures closely, because the op circles have no data and no grad and will never get one; they are punctuation.</p>
+
+  <p>Labels come next, and they are pure ergonomics: a <span class="mono">label=''</span> keyword on the constructor, set explicitly for leaves and assigned after the fact for intermediates (<span class="mono">e = a*b; e.label = 'e'</span>). Karpathy calls the naming "kind of naughty" — one-letter variables assigned on the same line as the expression — and it is, but it makes the rendered graph readable, which is the whole point. Note that the label is <em>not</em> derived from the Python variable name; it has to be handed over by hand, which is why he forgets to set <span class="mono">L.label</span> the first time and gets an empty box. The finished library drops <span class="mono">label</span> entirely — it isn't in <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L5" target="_blank" rel="noopener"><span class="mono">engine.py</span>'s constructor</a> — because it exists only to serve the lecture's diagrams.</p>
+
+  <h2>The running example, one layer deeper</h2>
+  <p>With drawing in place, Karpathy grows the expression by one level. <span class="mono">d</span> is no longer the output; a new leaf <span class="mono">f = -2.0</span> multiplies it to give <span class="mono">L = d * f = -8.0</span>. The capital <span class="mono">L</span> is deliberate — it stands for <em>loss</em>, and the whole graph is a rehearsal of the shape a real training step will have: some leaves that are weights, some leaves that are data, a scalar at the end.</p>
+
+  <p>The extra layer is not decoration. With <span class="mono">d</span> as the output, the chain rule has nothing to chain — every gradient is one local derivative deep, and you can't tell the difference between "apply the local rule" and "do the whole algorithm." With <span class="mono">L</span> on top, <span class="mono">a</span>'s influence on the output has to pass through <span class="mono">e</span>, then <span class="mono">d</span>, then the final multiply. That is a three-link chain, long enough that the recursive structure of backprop is visible rather than assumed. This is the expression the next part backpropagates entirely by hand.</p>
+
+  <p>The state of the graph at the end of this part, all seven nodes:</p>
+
+  <table class="kv">
+    <tr><th>Node</th><th>How it's made</th><th>data</th><th>grad</th><th>_op</th></tr>
+    <tr><td>a</td><td>leaf</td><td>2.0</td><td>0.0</td><td>—</td></tr>
+    <tr><td>b</td><td>leaf</td><td>−3.0</td><td>0.0</td><td>—</td></tr>
+    <tr><td>c</td><td>leaf</td><td>10.0</td><td>0.0</td><td>—</td></tr>
+    <tr><td>e</td><td>a * b</td><td>−6.0</td><td>0.0</td><td>*</td></tr>
+    <tr><td>d</td><td>e + c</td><td>4.0</td><td>0.0</td><td>+</td></tr>
+    <tr><td>f</td><td>leaf</td><td>−2.0</td><td>0.0</td><td>—</td></tr>
+    <tr><td>L</td><td>d * f</td><td>−8.0</td><td>0.0</td><td>*</td></tr>
+  </table>
+
+  <p>Every number in the <span class="mono">data</span> column is the forward pass. Every number in the <span class="mono">grad</span> column is a placeholder. That is the honest summary of where the lecture stands at 32:10.</p>
+
+  <h2>grad: an empty field with a precise meaning</h2>
+  <p>The last two minutes of this part add a single line to the constructor — <span class="mono">self.grad = 0.0</span> — and then spend the time explaining what it will mean, which is the right ratio. Three things are worth pinning down.</p>
+
+  <p><b>It is always a derivative with respect to one specific output.</b> <span class="mono">n.grad</span> does not mean "the derivative of <span class="mono">n</span>." It means dL/dn: how much the single scalar at the root of the graph changes when <span class="mono">n</span> changes by a hair. Which node counts as <span class="mono">L</span> is a choice you make when you call backward, and it is the reason the field lives on every node while the semantics point at exactly one of them. Karpathy states this at <a href="https://youtu.be/VMj-3S1tku0?t=1775" target="_blank" rel="noopener">29:35</a> and it is the single most common source of confusion in the whole lecture.</p>
+
+  <p><b>Zero is a meaningful initial value, not a null.</b> A gradient of zero says this value does not move the output at all — nudge it and nothing happens. Starting every node there means the graph begins in a state that is <em>wrong but interpretable</em>, and every step of backprop replaces a zero with a real number.</p>
+
+  <blockquote class="q off">At initialization we're assuming that every value does not affect the output.<span class="cite">— <a href="https://youtu.be/VMj-3S1tku0?t=1867" target="_blank" rel="noopener">31:07</a></span></blockquote>
+
+  <p>That choice is not merely cosmetic. In P4 the per-operation rules write <span class="mono">self.grad += …</span> rather than <span class="mono">=</span>, precisely so that a node feeding two consumers sums the contributions from both — and summing only works if the starting point is the additive identity. And in <a class="lnk" href="p07.html">P7</a>, the notorious training bug is forgetting to reset these fields to zero between steps, so stale gradients from the previous iteration accumulate on top of the new ones. Both of those depend on the decision made quietly here.</p>
+
+  <p><b>Leaves are not all the same kind of leaf.</b> At <a href="https://youtu.be/VMj-3S1tku0?t=1836" target="_blank" rel="noopener">30:36</a> Karpathy draws the distinction that motivates the whole exercise: in a neural net, some leaves are weights and some are input data. The gradients with respect to the weights are what you act on, because weights are what you're allowed to change. The gradients with respect to the data get computed too — the algorithm doesn't know the difference — and are simply ignored, because the dataset is fixed. Nothing in the <span class="mono">Value</span> class encodes this distinction; it lives entirely in what the caller decides to do with the numbers afterward.</p>
+
+  <div class="callout">Carry away: the forward pass is doing double duty. It computes the answer <em>and</em>, as a side effect of every overloaded operator, it builds the graph the backward pass will walk. That is the entire trick behind define-by-run autograd — PyTorch's included. Every <span class="mono">Value</span> operation you write is silently recording a tape.</div>
+
+  <h2 id="code">The code at the end of this part</h2>
+  <p>The saved notebook stores the <span class="mono">Value</span> class in its finished, end-of-lecture state, so cell 7 as checked in already contains <span class="mono">_backward</span>, <span class="mono">tanh</span>, and <span class="mono">backward()</span>. Reconstructed to where the video actually stands at 32:10 — no gradients computed yet, only the machinery for holding them — the class is this:</p>
+
+  <pre class="code-block"><code>class Value:
+
+  def __init__(self, data, _children=(), _op='', label=''):
+    self.data = data
+    self.grad = 0.0          # dL/d(self); 0.0 means "no effect on the output"
+    self._prev = set(_children)
+    self._op = _op
+    self.label = label
+
+  def __repr__(self):
+    return f"Value(data={self.data})"
+
+  def __add__(self, other):
+    out = Value(self.data + other.data, (self, other), '+')
+    return out
+
+  def __mul__(self, other):
+    out = Value(self.data * other.data, (self, other), '*')
+    return out
+
+
+a = Value(2.0, label='a')
+b = Value(-3.0, label='b')
+c = Value(10.0, label='c')
+e = a*b; e.label = 'e'
+d = e + c; d.label = 'd'
+f = Value(-2.0, label='f')
+L = d * f; L.label = 'L'
+L                              # Value(data=-8.0)</code></pre>
+
+  <p>And the visualizer, verbatim from cell 8 of the notebook, with the <span class="mono">grad</span> field already in the node label as it is by 31:38:</p>
+
+  <pre class="code-block"><code>from graphviz import Digraph
+
+def trace(root):
+  # builds a set of all nodes and edges in a graph
+  nodes, edges = set(), set()
+  def build(v):
+    if v not in nodes:
+      nodes.add(v)
+      for child in v._prev:
+        edges.add((child, v))
+        build(child)
+  build(root)
+  return nodes, edges
+
+def draw_dot(root):
+  dot = Digraph(format='svg', graph_attr={'rankdir': 'LR'}) # LR = left to right
+
+  nodes, edges = trace(root)
+  for n in nodes:
+    uid = str(id(n))
+    # for any value in the graph, create a rectangular ('record') node for it
+    dot.node(name = uid, label = "{ %s | data %.4f | grad %.4f }" % (n.label, n.data, n.grad), shape='record')
+    if n._op:
+      # if this value is a result of some operation, create an op node for it
+      dot.node(name = uid + n._op, label = n._op)
+      # and connect this node to it
+      dot.edge(uid + n._op, uid)
+
+  for n1, n2 in edges:
+    # connect n1 to the op node of n2
+    dot.edge(str(id(n1)), str(id(n2)) + n2._op)
+
+  return dot
+
+draw_dot(L)</code></pre>
+
+  <p>Line by line, the parts that repay attention:</p>
+  <ul class="readings">
+    <li><span class="mono">self._prev = set(_children)</span> — the backward-pointing edges. Survives verbatim into the library at <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L10" target="_blank" rel="noopener">engine.py line 10</a>; the lecture's <span class="mono">label</span> parameter does not.</li>
+    <li><span class="mono">out = Value(self.data + other.data, (self, other), '+')</span> — three jobs in one expression: compute, wire, tag. Compare <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L13" target="_blank" rel="noopener">engine.py lines 13–22</a>, which are identical apart from a coercion line for raw numbers and the <span class="mono">_backward</span> closure added in P4.</li>
+    <li><span class="mono">grad = 0.0</span> in the constructor rather than in the operators — leaves get one too, and leaves are exactly the nodes whose gradients you'll act on.</li>
+    <li><span class="mono">if v not in nodes</span> inside <span class="mono">build</span> — the visited guard. Without it a diamond-shaped graph is walked exponentially, and a repeated subexpression is drawn twice.</li>
+    <li><span class="mono">uid = str(id(n))</span> — graphviz needs string names, and object identity is the only thing guaranteed unique. Two distinct <span class="mono">Value</span>s holding 4.0 are still two nodes; equality is never consulted anywhere in micrograd, which is also why <span class="mono">_prev</span> can be a set of unhashable-looking objects (default identity hashing).</li>
+    <li><span class="mono">rankdir: 'LR'</span> and the edge direction <span class="mono">child → op → parent</span> — the arrows point the way the <em>forward</em> pass flows. Backprop runs against the arrows, which is worth holding in your head when you stare at these diagrams in P3.</li>
+  </ul>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"Why does <span class="mono">Value(2.0) + 1</span> blow up?"</b> Because the lecture's <span class="mono">__add__</span> reaches straight for <span class="mono">other.data</span> and a Python int has no <span class="mono">.data</span>. There is no coercion yet, and no <span class="mono">__radd__</span> either, so <span class="mono">1 + Value(2.0)</span> fails differently. Both gaps are real and both are filled later — coercion in <a class="lnk" href="p05.html">P5</a>, and permanently in the library's <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L14" target="_blank" rel="noopener">line 14</a>: <span class="mono">other = other if isinstance(other, Value) else Value(other)</span>. If you're typing along, wrap your constants.</li>
+    <li><b>"Are the <span class="mono">+</span> and <span class="mono">*</span> circles nodes in the graph?"</b> No. They exist only inside <span class="mono">draw_dot</span>, are named by string concatenation, and hold no state. The graph <span class="mono">trace</span> returns contains rectangles only. Nothing in backprop ever touches an op circle — the operation is a <em>string field on the result node</em>, and even that string is never read by the algorithm, only by the visualizer and by you.</li>
+    <li><b>"grad is 0.0 everywhere — is it broken?"</b> No; nothing has computed anything yet. At 32:10 the class can only hold gradients, not produce them. The distinction between "the field exists and is initialized" and "the field has been filled by a backward pass" is exactly the boundary between this part and the next one, and it is why Karpathy spends two minutes on a one-line change.</li>
+    <li><b>"Why store the operands at all — can't you just re-run the expression?"</b> You can, and that is what the numerical method in P1 does: it re-runs the whole forward pass once per input. The graph exists so you don't have to. Storing <span class="mono">_prev</span> costs one set per node and buys you every gradient in a single backward sweep instead of one forward pass per parameter. For a network with a million weights that is a factor-of-a-million difference, and it is the only reason deep learning is computationally possible.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/micrograd/micrograd_lecture_first_half_roughly.ipynb" target="_blank" rel="noopener">micrograd_lecture_first_half_roughly.ipynb</a> — Andrej Karpathy (2022) · cells 7–9 are this part; note the saved class is the end-of-lecture version, so read it knowing <span class="mono">_backward</span>/<span class="mono">tanh</span>/<span class="mono">backward</span> arrive in P4–P5.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py" target="_blank" rel="noopener">micrograd/engine.py</a> — Andrej Karpathy · the finished 94-line class; lines <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L5" target="_blank" rel="noopener">5–11</a> are this part's constructor and lines <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L13" target="_blank" rel="noopener">13–33</a> this part's two operators, grown up.</li>
+    <li><a href="https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types" target="_blank" rel="noopener">Emulating numeric types — Python data model</a> — Python Software Foundation · field map extra: the full dunder table, including the reflected <span class="mono">__radd__</span>/<span class="mono">__rmul__</span> that micrograd needs before <span class="mono">2 * neuron_output</span> works.</li>
+    <li><a href="https://pytorch.org/docs/stable/notes/autograd.html" target="_blank" rel="noopener">Autograd mechanics</a> — PyTorch docs · field map extra: the same idea at production scale — a DAG recorded during the forward pass, leaves, and why the graph is rebuilt every iteration rather than reused.</li>
+    <li><a href="https://cs231n.github.io/optimization-2/" target="_blank" rel="noopener">Backpropagation, intuitions (CS231n)</a> — Andrej Karpathy et al., Stanford · field map extra: Karpathy's own written treatment of the circuit-diagram view of an expression, with the same forward-then-backward pass over a small graph.</li>
+    <li><a href="https://graphviz.org/doc/info/shapes.html" target="_blank" rel="noopener">Graphviz node shapes</a> — Graphviz · field map extra: what the <span class="mono">record</span> shape and the <span class="mono">{ a | b | c }</span> label syntax in <span class="mono">draw_dot</span> actually mean, if you want to change what the boxes display.</li>
+    <li><a href="https://www.nature.com/articles/323533a0" target="_blank" rel="noopener">Learning representations by back-propagating errors</a> — Rumelhart, Hinton &amp; Williams, <em>Nature</em> (1986) · field map extra: the canonical reference for the algorithm this data structure exists to support. Read it after P4, not before.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Type it, don't paste it</b><span class="code">code</span> — In an empty notebook, write <span class="mono">Value</span> from memory: <span class="mono">data</span>, <span class="mono">grad</span>, <span class="mono">_prev</span>, <span class="mono">_op</span>, <span class="mono">label</span>, <span class="mono">__repr__</span>, <span class="mono">__add__</span>, <span class="mono">__mul__</span>. Then build the running example and check four things: <span class="mono">L.data == -8.0</span>; <span class="mono">d._op == '+'</span>; <span class="mono">len(a._prev) == 0</span>; and that <span class="mono">{v.label for v in L._prev} == {'d', 'f'}</span>. A good answer gets all four on the first run and can say, without looking, which of the seven nodes have an empty <span class="mono">_op</span> and why.</li>
+    <li><b>A tracer with no graphviz</b><span class="code">code</span> — <span class="mono">draw_dot</span> needs a system graphviz install that not every environment has. Write <span class="mono">show(root, indent=0)</span> that prints the graph as an indented tree — one line per node with label, data, grad, and op, recursing into <span class="mono">_prev</span> — and run it on <span class="mono">L</span>. Then extend it with a <span class="mono">visited</span> set and explain in a comment what changes for the expression <span class="mono">x = a*b; y = x + x</span>. A good answer notices that the indented form duplicates shared subexpressions while the real graph does not, and that <span class="mono">y._prev</span> has one element rather than two.</li>
+    <li><b>Predict the picture, then draw it</b> — Before running anything, sketch on paper the graph for <span class="mono">L2 = (a*b + c) * (a + c)</span> with the same leaf values: how many rectangles, how many op circles, how many arrows, and what <span class="mono">L2.data</span> is. Then build it and check against <span class="mono">draw_dot</span>. A good answer gets 7 rectangles (3 leaves plus 4 results &mdash; <span class="mono">a</span> and <span class="mono">c</span> are each reused, not duplicated), 4 op circles, 12 arrows, and 48.0; and it notices that <span class="mono">a</span> now reaches the output along two distinct paths, which is the exact situation that breaks a naive backward pass in <a class="lnk" href="p04.html">P4</a>. The <a href="https://colab.research.google.com/drive/1FPTx1RXtBfc4MaTkf7viZZD4U2F9gtKN?usp=sharing" target="_blank" rel="noopener">official exercise Colab</a> has no section for this part &mdash; its three sections land on <a class="lnk" href="p01.html">P1</a>, <a class="lnk" href="p05.html">P5</a> and <a class="lnk" href="p07.html">P7</a> &mdash; so this stands in for it.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p03.html">P03 Backpropagation by hand: an expression, then a neuron</a> · Back to the <a class="lnk" href="../index.html#derivatives">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "building micrograd" (2022), part 02. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

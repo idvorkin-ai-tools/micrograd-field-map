@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P07 Training by hand: gradient descent, the learning rate, the zero-grad mistake — micrograd, mapped</title>
+<meta name="description" content="Forward, backward, update, repeat: the minus sign in the update rule, why the learning rate is a knife edge, and the stale-gradient bug Karpathy hits on camera." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>MICROGRAD&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#nets">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box bb mono">PART 07 · A NEURAL NET, TRAINED BY HAND</span><span class="mono">121:12–136:46 · 16 min</span></div>
+  <h1>Training by hand: gradient descent, the learning rate, the zero-grad mistake</h1>
+  <div class="authors">Andrej Karpathy · building micrograd (2022) · part 07 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Video</span><a href="https://youtu.be/VMj-3S1tku0?t=7272" target="_blank" rel="noopener">Start this part at 121:12 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Code</span><a href="https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/micrograd/micrograd_lecture_second_half_roughly.ipynb" target="_blank" rel="noopener">micrograd_lecture_second_half_roughly.ipynb · the training loop, final cells ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-7272">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> Everything needed to train the network already exists at 121:12 — a forward pass that builds a graph, a <span class="mono">backward()</span> that fills in every <span class="mono">.grad</span>, and a <span class="mono">parameters()</span> list of all 41 weights and biases. What is missing is one line: <span class="mono">p.data += -lr * p.grad</span>. This part earns that minus sign from first principles, runs the loop by hand until the loss falls from 4.84 to essentially zero, and then Karpathy discovers on camera that he never reset the gradients between steps — so they had been accumulating, silently inflating his step size. The fix is three lines. Remember: the gradient tells you which way is <em>uphill</em>, you must walk downhill, and <span class="mono">.grad</span> is an accumulator that <em>you</em> are responsible for emptying.</div>
+
+  <p class="lead">The lecture has spent two hours building machinery and never once used it for its actual purpose. Every previous part was in service of one number: <span class="mono">dloss/dp</span> for each parameter <span class="mono">p</span>. This part spends that number. It is the shortest conceptual step in the whole video — subtract a small multiple of the gradient from each parameter, repeat — and it is also where the lecture stops being a calculus exercise and starts being machine learning. The three things worth slowing down for are the sign of the update, the size of the step, and the fact that gradients accumulate.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7272" target="_blank" rel="noopener">121:12</a> — The parameter on screen: one weight with <span class="mono">.data</span> ≈ 0.85 and a slightly negative <span class="mono">.grad</span>, and the question of what to do with it.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7335" target="_blank" rel="noopener">122:15</a> — Gradient descent stated: loop over all 41 parameters, nudge each <span class="mono">.data</span> by a small step in the direction of its gradient.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7367" target="_blank" rel="noopener">122:47</a> — The sign argument, worked out loud on the negative-gradient weight; the missing minus.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7429" target="_blank" rel="noopener">123:49</a> — The nudge lands: 0.854 → 0.857 on that weight, which is the direction the gradient asked for.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7491" target="_blank" rel="noopener">124:51</a> — Re-run the forward pass and read the new loss: 4.84 → 4.36.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7522" target="_blank" rel="noopener">125:22</a> — Doing it again, and again, by hand: 3.90, 3.66, 3.47, and the predictions visibly moving toward their targets.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7582" target="_blank" rel="noopener">126:22</a> — A bigger learning rate; the loss drops to 0.31 then 0.04; what "overstepping" means when you only know the local slope.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7674" target="_blank" rel="noopener">127:54</a> — After an overshoot the loss lands at 7e-9 anyway; the learning rate as a tuned quantity, not a derived one.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7705" target="_blank" rel="noopener">128:25</a> — Writing an actual training loop: forward, backward, update, print, for 20 steps.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7831" target="_blank" rel="noopener">130:31</a> — "A really terrible bug": the gradients were never zeroed between steps.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7922" target="_blank" rel="noopener">132:02</a> — Zeroing <span class="mono">p.grad</span> before <span class="mono">backward()</span>, and the corrected — noticeably slower — descent.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7983" target="_blank" rel="noopener">133:03</a> — Why the buggy version converged <em>faster</em>, and why that is not luck you can count on.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8043" target="_blank" rel="noopener">134:03</a> — The summary chapter: what a neural net is, and the straight line from these 41 parameters to GPT.</li>
+  </ul>
+
+  <h2>The minus sign is the whole idea</h2>
+
+  <p>At 121:12 the screen shows a single parameter — one weight from the first layer — with a <span class="mono">.data</span> of about 0.85 and a <span class="mono">.grad</span> that is slightly negative. Both numbers came from the previous part: <span class="mono">.data</span> from random initialization, <span class="mono">.grad</span> from a single call to <span class="mono">loss.backward()</span>. The gradient's meaning is fixed and narrow, and it is worth restating precisely because everything downstream depends on it: <strong>if you increase this weight by a tiny amount h, the loss changes by approximately grad × h.</strong> That is the entire contract. It says nothing about what happens for a large change.</p>
+
+  <p>So the weight's gradient is negative. Increase the weight, and the loss goes <em>down</em>. Since the goal is a small loss, the correct move is to increase the weight — which means moving <em>against</em> the sign of the gradient. Written out: <span class="mono">p.data += -step_size * p.grad</span>. With a negative <span class="mono">grad</span> the two minus signs cancel and the weight goes up. Karpathy first types the update without the minus, reasons out loud that it would push this weight down and therefore push the loss up, and adds the sign at <a href="https://youtu.be/VMj-3S1tku0?t=7399" target="_blank" rel="noopener">123:19</a>.</p>
+
+  <p>The second framing he gives is the one worth keeping, because it survives into every optimizer you will ever use. Collect all 41 partial derivatives into one vector. That vector points in the direction of <em>steepest increase</em> of the loss. You want a decrease. So you step along the negative of it. "Gradient descent" is not a metaphor — it is literally the instruction "go down the gradient," and the minus sign is where the word <em>descent</em> lives.</p>
+
+  <table class="kv">
+    <tr><th>Quantity</th><th>Value at 121:12</th><th>Why</th></tr>
+    <tr><td><span class="mono">p.data</span></td><td>≈ 0.854</td><td>random init from <span class="mono">random.uniform(-1,1)</span>, unchanged so far</td></tr>
+    <tr><td><span class="mono">p.grad</span></td><td>slightly negative (≈ −0.3)</td><td>filled in by one <span class="mono">loss.backward()</span> over the 4-example loss</td></tr>
+    <tr><td>step size</td><td>0.01</td><td>chosen, not derived — the first guess</td></tr>
+    <tr><td><span class="mono">p.data</span> after</td><td>≈ 0.857</td><td><span class="mono">0.854 + (−0.01 × −0.3)</span>: up, because raising it lowers the loss</td></tr>
+  </table>
+
+  <p>The change is three thousandths. That is the point: the linear approximation the gradient offers is only trustworthy in a small neighbourhood, so the step is deliberately small. Multiply that tiny move across all 41 parameters at once, though, and the loss moves by a lot more than you would expect from any single one of them — because every one of them moved in a helpful direction simultaneously.</p>
+
+  <h2>One step, then a loop</h2>
+
+  <p>He nudges all the parameters, re-runs the forward pass — the dataset definition is untouched, only the network changed — and reads the loss. It goes from 4.84 to 4.36 (<a href="https://youtu.be/VMj-3S1tku0?t=7491" target="_blank" rel="noopener">124:51</a>). Then he does it by hand a few more times, and the sequence he reads aloud is the first evidence in the entire lecture that any of this <em>works</em>:</p>
+
+  <table class="kv">
+    <tr><th>Step</th><th>Learning rate</th><th>Loss</th><th>Note</th></tr>
+    <tr><td>start</td><td>—</td><td>4.84</td><td>random 41-parameter MLP, four examples</td></tr>
+    <tr><td>1</td><td>0.01</td><td>4.36</td><td>first manual update</td></tr>
+    <tr><td>2</td><td>0.01</td><td>3.90</td><td></td></tr>
+    <tr><td>3</td><td>0.01</td><td>3.66</td><td></td></tr>
+    <tr><td>4</td><td>0.01</td><td>3.47</td><td>predictions visibly drifting toward ±1</td></tr>
+    <tr><td>…</td><td>raised</td><td>0.31</td><td>"we may be able to afford to go a bit faster"</td></tr>
+    <tr><td>…</td><td>raised</td><td>0.04</td><td>predictions now ≈ 1, −1, −1, 1</td></tr>
+    <tr><td>…</td><td>too high</td><td>7e-9</td><td>after a visible overshoot that could have gone badly</td></tr>
+  </table>
+
+  <p>Note what is <em>not</em> happening here. There is no optimizer object, no framework, no magic. Each row of that table is three manual actions: recompute <span class="mono">ypred</span> and <span class="mono">loss</span>, call <span class="mono">loss.backward()</span>, then walk <span class="mono">n.parameters()</span> and adjust each <span class="mono">.data</span>. Low loss means the four predictions match the four targets <span class="mono">[1.0, -1.0, -1.0, 1.0]</span>, because that is exactly what the mean-squared-error sum from <a class="lnk" href="p06.html">P6</a> measures. When the loss reaches 7e-9 the predictions are correct to seven decimal places.</p>
+
+  <h2>The learning rate is a knife edge, and nobody derives it</h2>
+
+  <p>At <a href="https://youtu.be/VMj-3S1tku0?t=7582" target="_blank" rel="noopener">126:22</a> he raises the step size to move faster, and then pauses to explain the risk, which is the most important idea in this stretch. The gradient is a <em>local</em> object. It describes the loss surface in an infinitesimal neighbourhood of the current parameters and makes no promise whatsoever about the terrain further out. Take a step small enough and the linear approximation holds and the loss falls. Take a step large enough and you land somewhere the approximation never modelled — possibly a region where the loss is far higher than where you started. Do that repeatedly and training diverges.</p>
+
+  <p>Then it happens live. He steps too aggressively, the loss visibly blows up, and — through luck rather than design — the parameters land in a region that then optimizes down to 7e-9. He is candid that this is not a technique:</p>
+
+  <blockquote class="q">this learning rate and the tuning of it is a subtle art
+    <span class="cite">Andrej Karpathy · <a href="https://youtu.be/VMj-3S1tku0?t=7674" target="_blank" rel="noopener">127:54</a></span></blockquote>
+
+  <p>His practical summary is the one every practitioner still uses: too low and you converge too slowly to be useful; too high and training is unstable and may explode. When he writes the real loop at <a href="https://youtu.be/VMj-3S1tku0?t=7767" target="_blank" rel="noopener">129:27</a> he says 0.01 is a little too small and 0.1 is dangerously high, and picks something in between. <em>(The notebook checked into <span class="mono">nn-zero-to-hero</span> ships the loop with <span class="mono">-0.1</span> — the cells were tidied after recording, so treat the notebook's constant as a later edit rather than the number on screen.)</em></p>
+
+  <div class="callout">Nothing in backpropagation tells you how far to step. Backprop gives you a <em>direction</em> and a first-order estimate of how fast the loss changes along it; the distance is a hyperparameter you choose, test, and often schedule. The real micrograd demo notebook makes this explicit — its loop sets <span class="mono">learning_rate = 1.0 - 0.9*k/100</span>, decaying from 1.0 down to 0.1 across 100 steps, so early steps move fast and late steps refine. See <a class="lnk" href="https://github.com/karpathy/micrograd/blob/master/demo.ipynb" target="_blank" rel="noopener">demo.ipynb</a>.</div>
+
+  <h2>The bug: gradients are an accumulator, and nobody empties it for you</h2>
+
+  <p>At 130:31 the lecture turns, and this is the most instructive four minutes in the video. Karpathy stops, says the loop has a terrible and very common bug, and — rather than reshoot — leaves it in:</p>
+
+  <blockquote class="q">i can't believe i've done it for the 20th time in my life especially on camera
+    <span class="cite">Andrej Karpathy · <a href="https://youtu.be/VMj-3S1tku0?t=7831" target="_blank" rel="noopener">130:31</a></span></blockquote>
+
+  <p>The bug traces directly back to the design decision from <a class="lnk" href="p04.html">P4</a>. Every <span class="mono">_backward</span> closure in the <span class="mono">Value</span> class writes <span class="mono">self.grad += …</span>, never <span class="mono">=</span>. That <span class="mono">+=</span> was mandatory: a node used in several places downstream receives a gradient contribution along each path, and those contributions must sum. But <span class="mono">+=</span> is indiscriminate. It has no notion of "this is a new backward pass, forget the last one." So across training steps, the arithmetic is:</p>
+
+  <table class="kv">
+    <tr><th>Step</th><th><span class="mono">p.grad</span> before <span class="mono">backward()</span></th><th><span class="mono">p.grad</span> used by the update</th></tr>
+    <tr><td>1</td><td>0 (set in <span class="mono">__init__</span>)</td><td>g₁</td></tr>
+    <tr><td>2</td><td>g₁ (never cleared)</td><td>g₁ + g₂</td></tr>
+    <tr><td>3</td><td>g₁ + g₂</td><td>g₁ + g₂ + g₃</td></tr>
+    <tr><td>k</td><td>sum of all previous</td><td>g₁ + … + g_k</td></tr>
+  </table>
+
+  <p>So the update at step k is not <span class="mono">lr × g_k</span> but <span class="mono">lr ×</span> the running sum of every gradient computed so far. Two things follow. First, the <em>effective</em> learning rate grows without bound as training proceeds. Second, the direction is wrong too — it is a cumulative sum of gradients evaluated at parameter settings the network has long since left. (It superficially resembles momentum, but momentum uses a decaying average with a coefficient below 1, which keeps the running sum bounded. This has no decay at all.)</p>
+
+  <p>The fix is to reset the accumulator immediately before each backward pass:</p>
+
+  <pre class="code-block"><code>for p in n.parameters():
+  p.grad = 0.0
+loss.backward()</code></pre>
+
+  <p>Ordering matters and is easy to get wrong. Zero <em>after</em> <span class="mono">backward()</span> and you wipe the gradients before the update reads them, so nothing learns at all. Zero before, and each backward pass starts from a clean slate and ends holding exactly the derivatives of the current loss. In PyTorch the same operation is <span class="mono">optimizer.zero_grad()</span> or <span class="mono">model.zero_grad()</span>, and it exists for exactly this reason — PyTorch's <span class="mono">.backward()</span> accumulates too. Karpathy later refactors it into micrograd as a <span class="mono">Module.zero_grad()</span> base method precisely to mirror <span class="mono">nn.Module</span> (<a class="lnk" href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L6" target="_blank" rel="noopener">nn.py L6–L8</a>).</p>
+
+  <p>The subtlest part is what happens after the fix: <strong>training gets slower.</strong> At <a href="https://youtu.be/VMj-3S1tku0?t=7953" target="_blank" rel="noopener">132:33</a> the corrected loop descends in a visibly more controlled, more gradual way and needs more steps to reach a low loss. The buggy version had, by accident, been taking enormous steps on a problem so easy that enormous steps happened to work. Four examples, 41 parameters, a target the network can fit essentially exactly — there was no ravine to fall into. On any real problem the same bug would have destabilized training or quietly capped how good the model could get, and the code would still have run without error.</p>
+
+  <div class="callout off">This is the transferable lesson of the part, and it is about debugging, not calculus: <strong>a neural network that trains is not evidence that the training code is correct.</strong> Gradient bugs do not raise exceptions. They degrade results by an amount you cannot see unless you have a correct version to compare against. This is why gradient checking against finite differences, and unit tests against PyTorch (as in <a class="lnk" href="https://github.com/karpathy/micrograd/blob/master/test/test_engine.py" target="_blank" rel="noopener">test_engine.py</a>), earn their keep.</div>
+
+  <h2>The summary chapter: what he claims a neural net is</h2>
+
+  <p>From <a href="https://youtu.be/VMj-3S1tku0?t=8043" target="_blank" rel="noopener">134:03</a> Karpathy compresses the whole lecture into one paragraph, and it is a good paragraph to be able to reproduce from memory. A neural net is a mathematical expression — in the multi-layer-perceptron case a fairly simple one — that takes the data and the parameters as inputs and produces predictions. Attached to it is a loss function that scores those predictions against the targets, arranged so that <em>low loss means the network is doing what you want</em>. Backpropagation through that whole expression yields the gradient of the loss with respect to every parameter. Gradient descent then follows that gradient downhill, repeatedly. That is the entire algorithm.</p>
+
+  <blockquote class="q">we just have a blob of neural stuff and we can make it do arbitrary things
+    <span class="cite">Andrej Karpathy · <a href="https://youtu.be/VMj-3S1tku0?t=8104" target="_blank" rel="noopener">135:04</a></span></blockquote>
+
+  <p>He then draws the line to the frontier explicitly, and the claim is stronger than it first sounds. This network has 41 parameters; a GPT-class model has hundreds of billions. The learning problem changes — instead of four hand-written examples with ±1 targets, you take a large corpus of internet text and train the network to predict the next token in a sequence — and Karpathy notes that at that scale the resulting networks display genuinely surprising emergent behaviour. But the machinery does not change. The <span class="mono">Value</span> abstraction is there (as tensors rather than scalars), the gradient is there, backpropagation is there, gradient descent is there.</p>
+
+  <p>He names two honest differences at <a href="https://youtu.be/VMj-3S1tku0?t=8164" target="_blank" rel="noopener">136:04</a>. The update rule in practice is not this plain stochastic gradient descent — production training uses variants such as Adam, and things like learning-rate decay, which the micrograd demo notebook already hints at. And the loss for next-token prediction is not mean squared error but cross-entropy. Both are swaps of a component, not of the architecture of the idea. If you want to watch the same skeleton get filled in at the next size up, that is <a class="lnk" href="https://youtu.be/PaCmpygFfXo" target="_blank" rel="noopener">makemore part 1</a>, and eventually <a class="lnk" href="https://idvorkin-ai-tools.github.io/build-gpt-field-map/" target="_blank" rel="noopener">let's build GPT</a> — same forward/backward/update loop, bigger expression.</p>
+
+  <h2 id="code">The code at the end of this part</h2>
+
+  <pre class="code-block"><code>xs = [
+  [2.0, 3.0, -1.0],
+  [3.0, -1.0, 0.5],
+  [0.5, 1.0, 1.0],
+  [1.0, 1.0, -1.0],
+]
+ys = [1.0, -1.0, -1.0, 1.0] # desired targets
+
+for k in range(20):
+
+  # forward pass
+  ypred = [n(x) for x in xs]
+  loss = sum((yout - ygt)**2 for ygt, yout in zip(ys, ypred))
+
+  # backward pass
+  for p in n.parameters():
+    p.grad = 0.0
+  loss.backward()
+
+  # update
+  for p in n.parameters():
+    p.data += -0.1 * p.grad
+
+  print(k, loss.data)</code></pre>
+
+  <p>Twelve lines, and every one of them is load-bearing:</p>
+
+  <ul class="readings">
+    <li><span class="mono">ypred = [n(x) for x in xs]</span> — the forward pass. Calling the <span class="mono">MLP</span> on a plain list of Python floats builds a fresh expression graph of <span class="mono">Value</span> nodes, four of them (one per example), each rooted in the same 41 parameter <span class="mono">Value</span>s. The parameters persist across iterations; the graph is rebuilt from scratch every step. That is why nothing needs to be "reset" except the gradients.</li>
+    <li><span class="mono">loss = sum((yout - ygt)**2 …)</span> — mean squared error without the mean: a sum of four squared errors. It is itself a <span class="mono">Value</span>, and it is the single root that the four sub-graphs feed into, which is what makes one <span class="mono">backward()</span> call sufficient. <span class="mono">-</span> and <span class="mono">**2</span> exist only because of the operator work in <a class="lnk" href="p05.html">P5</a> (<a class="lnk" href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L35" target="_blank" rel="noopener">__pow__ at engine.py L35</a>, <a class="lnk" href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L78" target="_blank" rel="noopener">__sub__ at L78</a>).</li>
+    <li><span class="mono">for p in n.parameters(): p.grad = 0.0</span> — the fix from 132:02. It reaches every weight and bias through the nested list comprehensions of <span class="mono">MLP.parameters()</span> → <span class="mono">Layer.parameters()</span> → <span class="mono">Neuron.parameters()</span>. In the finished library this is hoisted to <a class="lnk" href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L6" target="_blank" rel="noopener">Module.zero_grad, nn.py L6</a>. Note it only zeroes the <em>parameters</em>, not every node in the graph — the intermediate nodes are new objects each iteration and start at <span class="mono">grad = 0</span> from the constructor anyway.</li>
+    <li><span class="mono">loss.backward()</span> — one call, and every one of the 41 parameters ends up holding <span class="mono">dloss/dp</span>. Internally it topologically sorts the graph, seeds <span class="mono">loss.grad = 1.0</span>, and walks the nodes in reverse calling each <span class="mono">_backward</span> closure: <a class="lnk" href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L54" target="_blank" rel="noopener">engine.py L54–L70</a>. The topological order is what guarantees a node's own <span class="mono">.grad</span> is complete before it is used to push gradient to its children.</li>
+    <li><span class="mono">p.data += -0.1 * p.grad</span> — the update, and the only new idea in this part. It touches <span class="mono">.data</span> only. It builds no graph and creates no <span class="mono">Value</span>s; it is ordinary float arithmetic that mutates the leaves the next forward pass will read.</li>
+    <li><span class="mono">print(k, loss.data)</span> — the whole diagnostic apparatus. If this number is not going down, something above it is wrong.</li>
+  </ul>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"Why minus? The gradient is what I want, isn't it?"</b> — The gradient answers "which way makes the loss go <em>up</em> fastest." You want the loss to go down, so you negate. Sanity check it on one parameter with a negative gradient, as Karpathy does: negative gradient means <em>increasing</em> this weight decreases the loss, so a correct update must increase it, and <span class="mono">-lr × (negative)</span> is positive. If your loss climbs steadily from step one, a flipped sign is the first thing to check — you have implemented gradient <em>ascent</em>.</li>
+    <li><b>"If <span class="mono">+=</span> was the correct fix in P4, why do I now have to zero the gradients?"</b> — These are the same fact seen from two sides. Within one backward pass, accumulation is required, because a node reached by several downstream paths must sum its contributions. Between passes, accumulation is wrong, because the contract of <span class="mono">.grad</span> is "derivative of the current loss." <span class="mono">Value</span> has no way to know where one pass ends and another begins, so the caller must say so, by writing zeros. Every autograd framework makes the same trade and hands you the same responsibility.</li>
+    <li><b>"My loss got worse after I fixed the zero-grad bug — did I break it?"</b> — Almost certainly not; expect this. The buggy loop was taking effectively huge steps (the accumulated sum of every past gradient), which on a four-example toy problem is a free lunch. Once fixed, you are taking honest <span class="mono">lr</span>-sized steps and need more of them. Compare the two by number of steps to reach a given loss, and raise the learning rate or the step count rather than reverting the fix.</li>
+    <li><b>"I ran the notebook and my losses start at 0.002, not 4.8."</b> — The checked-in <span class="mono">micrograd_lecture_second_half_roughly.ipynb</span> has stored output from a re-run of the training cell on an <em>already-trained</em> network: the loop prints 0.00205 down to 0.00179 over its 20 steps, because <span class="mono">n</span> was never re-initialized. To reproduce the video's trajectory, re-run the <span class="mono">n = MLP(3, [4, 4, 1])</span> cell first. This is also a small lesson in why notebook outputs are not evidence.</li>
+    <li><b>"Is that it? Where is the rest of training?"</b> — That is genuinely it, for this problem. What real training adds — batching, better optimizers, learning-rate schedules, regularization, validation splits — are refinements of the loop, not additions to the theory. Karpathy shows several of them in <a class="lnk" href="https://github.com/karpathy/micrograd/blob/master/demo.ipynb" target="_blank" rel="noopener">demo.ipynb</a> immediately after this part.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L6" target="_blank" rel="noopener">micrograd/nn.py L6–L8 — <span class="mono">Module.zero_grad</span></a> — Andrej Karpathy · the three-line refactor of this part's fix, deliberately shaped like <span class="mono">torch.nn.Module</span>.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L54" target="_blank" rel="noopener">micrograd/engine.py L54–L70 — <span class="mono">Value.backward</span></a> — Andrej Karpathy · the topological sort plus reverse walk that the one <span class="mono">loss.backward()</span> line in the training loop invokes.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/demo.ipynb" target="_blank" rel="noopener">micrograd demo.ipynb — the moons classifier</a> — Andrej Karpathy · the same loop at slightly larger scale, with batching, a max-margin loss, L2 regularization, and <span class="mono">learning_rate = 1.0 - 0.9*k/100</span> decay.</li>
+    <li><a href="https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.zero_grad.html" target="_blank" rel="noopener">torch.optim.Optimizer.zero_grad — PyTorch docs</a> — PyTorch · the production form of the fix, including the <span class="mono">set_to_none</span> default that trips people who inspect <span class="mono">.grad</span> after zeroing. <em>Field map extra.</em></li>
+    <li><a href="https://pytorch.org/docs/stable/generated/torch.optim.SGD.html" target="_blank" rel="noopener">torch.optim.SGD — PyTorch docs</a> — PyTorch · <span class="mono">p.data += -lr * p.grad</span> with the options this part does not have: momentum, weight decay, Nesterov. <em>Field map extra.</em></li>
+    <li><a href="https://karpathy.github.io/2019/04/25/recipe/" target="_blank" rel="noopener">A Recipe for Training Neural Networks</a> — Andrej Karpathy (2019) · the long-form version of the "most common neural net mistakes" list he pulls up at 130:31; the zero-grad omission is item three on that list. <em>Field map extra.</em></li>
+    <li><a href="https://cs231n.github.io/optimization-1/" target="_blank" rel="noopener">CS231n: Optimization — stochastic gradient descent</a> — Andrej Karpathy / Stanford CS231n · the step-size discussion in written form, with the "effective learning rate" picture and finite-difference gradient checking. <em>Field map extra.</em></li>
+    <li><a href="https://www.nature.com/articles/323533a0" target="_blank" rel="noopener">Learning representations by back-propagating errors</a> — Rumelhart, Hinton &amp; Williams, <em>Nature</em> (1986) · the original: squared-error loss, gradients by the chain rule, weights nudged along the negative gradient. The loop in this part is that paper's algorithm in Python. <em>Field map extra.</em></li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Reproduce the bug, then measure it</b><span class="code">code</span> — Take the loop above and make two runs from the same seed: one with the zero-grad lines, one without. (a) Set <span class="mono">random.seed(1337)</span> and re-create the MLP identically for both. (b) Record loss at every step for 30 steps. (c) In the buggy run, also record the norm of <span class="mono">p.grad</span> for one fixed parameter each step. A good answer shows the buggy run's gradient magnitude growing roughly linearly while the correct run's stays bounded, notes that the buggy run reaches a lower loss <em>sooner</em>, and explains why that is an artifact of the problem being trivially fittable rather than a virtue.</li>
+    <li><b>Find the learning rate cliff</b><span class="code">code</span> — Sweep <span class="mono">lr</span> over <span class="mono">[0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 2.0]</span>, 50 steps each, correct zero-grad, same initialization every time. Plot final loss against <span class="mono">lr</span> on a log x-axis. A good answer identifies three regimes — too slow to converge, a working band, and divergence — reports roughly where the boundary falls for this network, and says why that boundary is a property of <em>this</em> loss surface and does not transfer to a different model.</li>
+    <li><b>Write <span class="mono">zero_grad</span> the way the library does</b><span class="code">code</span> — Add a <span class="mono">Module</span> base class with <span class="mono">zero_grad()</span> and a default <span class="mono">parameters()</span> returning <span class="mono">[]</span>, and make <span class="mono">Neuron</span>, <span class="mono">Layer</span> and <span class="mono">MLP</span> inherit from it, so the loop becomes <span class="mono">n.zero_grad()</span>. Then check your version against <a class="lnk" href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L4" target="_blank" rel="noopener">nn.py L4–L11</a>. A good answer notices that the base <span class="mono">zero_grad</span> works for all three classes without overriding, because each one already implements <span class="mono">parameters()</span>.</li>
+    <li><b>The official exercise notebook, section 3</b> — The <a class="lnk" href="https://colab.research.google.com/drive/1FPTx1RXtBfc4MaTkf7viZZD4U2F9gtKN?usp=sharing" target="_blank" rel="noopener">exercise Colab</a> from the video description ends by building a softmax and negative-log-likelihood loss on top of <span class="mono">Value</span> and checking the gradients against PyTorch. That verification step is this part's discipline applied to a different loss: swap mean squared error for cross-entropy and confirm the same training loop still drives it down.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p08.html">P08 The real code: micrograd on GitHub, PyTorch's tanh backward, what comes next</a> · Back to the <a class="lnk" href="../index.html#nets">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "building micrograd" (2022), part 07. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P08 The real code: micrograd on GitHub, PyTorch's tanh backward, what comes next — micrograd, mapped</title>
+<meta name="description" content="Karpathy's tour of the finished micrograd repo, the hunt for PyTorch's tanh_backward in C++, and where the Zero to Hero series goes next." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>MICROGRAD&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#real">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box bb mono">PART 08 · THE REAL CODE</span><span class="mono">136:46–145:52 · 9 min</span></div>
+  <h1>The real code: micrograd on GitHub, PyTorch's tanh backward, what comes next</h1>
+  <div class="authors">Andrej Karpathy · building micrograd (2022) · part 08 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Video</span><a href="https://youtu.be/VMj-3S1tku0?t=8206" target="_blank" rel="noopener">Start this part at 136:46 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Code</span><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py" target="_blank" rel="noopener">micrograd/engine.py · the finished 94-line autograd engine ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-8206">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> Karpathy opened the lecture with a promise: by the end you will understand every line of micrograd. This nine-minute coda is him collecting on it. He scrolls the repo top to bottom — <span class="mono">engine.py</span>, <span class="mono">nn.py</span>, the test that pins micrograd's gradients to PyTorch's, the moons demo — and almost nothing in it is new, which is the point. Then he goes hunting inside PyTorch for the C++ that computes the derivative of <span class="mono">tanh</span>, spends fifteen minutes failing, and eventually finds <span class="mono">a * (1 - b * b)</span> buried in a kernel file: the same one line you wrote in a notebook, wrapped in dispatch machinery. The thing to remember is the shape of that comparison — real frameworks are not doing something smarter than you did, they are doing the same thing across many dtypes and two devices, and the price of that generality is that the idea becomes hard to find.</div>
+
+  <p class="lead">Every part before this one built something. This part audits. The lecture has spent two and a quarter hours deriving a scalar autograd engine and a tiny neural net library from nothing, and there is a fair question hanging over it: was that the real thing, or a teaching model of the real thing? Karpathy answers twice. First by showing that the library on PyPI is, line for line, what you just wrote — so the answer is "the real thing, at least at this scale". Then by digging into PyTorch to show that the production version of the one derivative you understand best is also literally what you wrote — so the answer is "the real thing at scale, too". What separates them is not insight; it is dtypes, devices, and a dispatch table.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8206" target="_blank" rel="noopener">136:46</a> — Walkthrough begins: the promise from the intro, and the caveat that the repo will keep moving after the recording.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8225" target="_blank" rel="noopener">137:05</a> — <span class="mono">engine.py</span>: <span class="mono">data</span>, <span class="mono">grad</span>, <span class="mono">_backward</span>, <span class="mono">_prev</span>, <span class="mono">_op</span> — all recognisable; add, multiply, scalar power, and ReLU where the lecture used tanh.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8287" target="_blank" rel="noopener">138:07</a> — <span class="mono">nn.py</span>: identical <span class="mono">Neuron</span>/<span class="mono">Layer</span>/<span class="mono">MLP</span>, plus one new thing — a <span class="mono">Module</span> base class that mirrors PyTorch's <span class="mono">nn.Module</span> and owns <span class="mono">zero_grad</span>.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8318" target="_blank" rel="noopener">138:38</a> — The test suite: the same expression written twice, once in micrograd and once in PyTorch, with both forward values and input gradients asserted equal.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8349" target="_blank" rel="noopener">139:09</a> — <span class="mono">demo.ipynb</span>: a real binary classifier on a two-moons dataset, with batching, a max-margin loss, L2 regularisation and a learning-rate schedule — the parts the lecture skipped.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8470" target="_blank" rel="noopener">141:10</a> — "Real stuff": what we are looking for in PyTorch is something shaped like <span class="mono">(1 - t**2) * out.grad</span>.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8502" target="_blank" rel="noopener">141:42</a> — Fifteen minutes of searching, 2,800 hits across 406 files, and a candid aside about what large codebases are optimised for.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8532" target="_blank" rel="noopener">142:12</a> — The CPU kernel, found via a GitHub issue; why it is long (complex types, bfloat16, vectorised paths) and where the actual arithmetic hides.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8594" target="_blank" rel="noopener">143:14</a> — The CUDA kernel: the same rule, one line, and Karpathy's puzzlement that any of this lives under "binary ops".</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8625" target="_blank" rel="noopener">143:45</a> — Extending PyTorch: subclass <span class="mono">torch.autograd.Function</span>, supply <span class="mono">forward</span> and <span class="mono">backward</span>, and your operation is a first-class citizen of autograd.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8679" target="_blank" rel="noopener">144:39</a> — Conclusion: links in the description, questions in the comments, a follow-up video promised.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=8720" target="_blank" rel="noopener">145:20</a> — Outtakes: thirty seconds of the takes that did not survive, including "microcrab".</li>
+  </ul>
+
+  <h2>engine.py: the same object, with the teaching scaffolding removed</h2>
+
+  <p>Open <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py" target="_blank" rel="noopener">engine.py</a> next to the notebook you have been building and the first useful observation is how little there is to reconcile. The constructor stores <span class="mono">data</span> and <span class="mono">grad</span>, sets <span class="mono">_backward</span> to a no-op lambda, freezes the children into a <span class="mono">set</span>, and records the operation string for the graph drawing. Every one of those five attributes was introduced somewhere in <a class="lnk" href="p02.html">P2</a> through <a class="lnk" href="p04.html">P4</a> and none of them is new here.</p>
+
+  <p>The differences are worth cataloguing precisely, because "it's basically the same" is the kind of claim that hides the one place where it is not.</p>
+
+  <table class="kv">
+    <tr><th>Lecture notebook</th><th>Library <span class="mono">engine.py</span></th><th>Why</th></tr>
+    <tr><td><span class="mono">label=''</span> on every Value</td><td>gone</td><td>Labels existed only so <span class="mono">draw_dot</span> could print readable node names while you were learning. Nothing computes with them.</td></tr>
+    <tr><td><span class="mono">tanh()</span>, and <span class="mono">exp()</span></td><td><span class="mono">relu()</span> only</td><td>The one substantive change. ReLU is cheaper, is what modern nets actually use, and its derivative is a step function rather than a smooth curve. Karpathy taught with tanh precisely <em>because</em> its local gradient is more interesting to work out.</td></tr>
+    <tr><td><span class="mono">self.grad += 1.0 * out.grad</span> in <span class="mono">__add__</span></td><td><span class="mono">self.grad += out.grad</span></td><td>Identical arithmetic. The explicit <span class="mono">1.0</span> was there to make the local derivative of addition visible; once you believe it, it is noise.</td></tr>
+    <tr><td>grad initialised to <span class="mono">0.0</span></td><td>initialised to <span class="mono">0</span></td><td>Cosmetic. Python promotes on the first <span class="mono">+=</span> with a float.</td></tr>
+    <tr><td><span class="mono">__radd__</span>, <span class="mono">__rmul__</span>, <span class="mono">__neg__</span>, <span class="mono">__sub__</span>, <span class="mono">__truediv__</span></td><td>those plus <span class="mono">__rsub__</span> and <span class="mono">__rtruediv__</span></td><td>The reflected forms you did not happen to need. All are one-liners on top of <span class="mono">__add__</span>, <span class="mono">__mul__</span> and <span class="mono">__pow__</span> — the library adds no new backward rules to support them.</td></tr>
+  </table>
+
+  <p>That last row is the structurally interesting one. There are exactly four primitive operations in the finished engine — add, multiply, raise to a scalar power, ReLU — and therefore exactly four <span class="mono">_backward</span> closures to be right about. Subtraction is <span class="mono">a + (-b)</span>, negation is <span class="mono">a * -1</span>, division is <span class="mono">a * b**-1</span>. Every one of those compiles down to nodes whose gradients you already derived. Getting the derivative surface this small is a design decision, and it is why the whole file fits in 94 lines.</p>
+
+  <pre class="code-block"><code>def relu(self):
+    out = Value(0 if self.data &lt; 0 else self.data, (self,), 'ReLU')
+
+    def _backward():
+        self.grad += (out.data &gt; 0) * out.grad
+    out._backward = _backward
+
+    return out</code></pre>
+
+  <p>The one line to read carefully is <span class="mono">(out.data &gt; 0) * out.grad</span>. That comparison produces a Python <span class="mono">bool</span>, which multiplies as 1 or 0 — so the gradient passes straight through when the unit was active and is killed when it was not. Note that the test is on <span class="mono">out.data</span>, the value <em>after</em> the ReLU, not on <span class="mono">self.data</span>; for this function they agree everywhere except exactly at zero, where the derivative does not exist and the code silently picks zero. That is the same pragmatic choice every framework makes, and it is invisible unless you go looking.</p>
+
+  <h2>nn.py: the one genuinely new idea is <span class="mono">Module</span></h2>
+
+  <p><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py" target="_blank" rel="noopener">nn.py</a> is 60 lines and you have written all but eleven of them. <span class="mono">Neuron</span> holds a list of weight Values and a bias; <span class="mono">Layer</span> holds neurons; <span class="mono">MLP</span> holds layers; <span class="mono">parameters()</span> at each level is a flatten of the level below. What is new is that all three now inherit from a base class:</p>
+
+  <pre class="code-block"><code>class Module:
+
+    def zero_grad(self):
+        for p in self.parameters():
+            p.grad = 0
+
+    def parameters(self):
+        return []</code></pre>
+
+  <p>This is a refactor with a motive. In <a class="lnk" href="p07.html">P7</a>, forgetting to reset gradients before <span class="mono">backward()</span> silently turned a training loop into an accumulator and produced a giant effective step size. The fix there was a loop over <span class="mono">n.parameters()</span> written by hand at the top of every iteration. Hoisting it into a base class means the fix is available on every object in the library — <span class="mono">model.zero_grad()</span> works on a single neuron, a layer, or the whole network — and, more to the point, it is now the same call you would make in PyTorch, where <span class="mono">nn.Module</span> also owns <span class="mono">zero_grad</span> and <span class="mono">parameters</span>. Karpathy is explicit that the API match is deliberate: the code you take away should transfer.</p>
+
+  <p>Two small divergences from the lecture's version are worth noticing because they change behaviour rather than style. The library's <span class="mono">Neuron.__init__</span> takes a <span class="mono">nonlin=True</span> flag and initialises the bias to exactly <span class="mono">Value(0)</span> instead of a random draw. And <span class="mono">MLP.__init__</span> passes <span class="mono">nonlin=i != len(nouts) - 1</span>, which makes the final layer linear. Both matter for real training: a zero bias is a standard, less arbitrary starting point than a uniform sample, and a squashed output layer cannot emit the unbounded scores that a margin loss wants. The four-example toy problem in <a class="lnk" href="p06.html">P6</a> was forgiving enough that neither choice showed up.</p>
+
+  <h2>The test that makes "we agree with PyTorch" checkable</h2>
+
+  <p>Two functions in <a href="https://github.com/karpathy/micrograd/blob/master/test/test_engine.py" target="_blank" rel="noopener">test/test_engine.py</a>, both built the same way: write an expression in micrograd, write the byte-identical expression in PyTorch, call <span class="mono">backward()</span> on both, assert the forward values and the input gradients match. It is the single most valuable file in the repo for someone who has just finished this lecture, because it converts a claim into a command you can run.</p>
+
+  <p>The details reward a look. <span class="mono">test_sanity_check</span> asserts with plain <span class="mono">==</span> — exact floating-point equality between a hand-rolled Python engine and a C++ framework. That works because the expression is short and every intermediate is exactly representable in the doubles both sides use, so both compute the identical sequence of IEEE operations. <span class="mono">test_more_ops</span> chains far more operations, including division and squaring, so the two implementations' orderings diverge in the last bits; that test drops to a <span class="mono">1e-6</span> tolerance. The progression from exact to approximate is the honest thing to do and is a good habit to copy.</p>
+
+  <p>Note also what the tests use as inputs: a single negative starting value, <span class="mono">-4.0</span>, run through ReLUs. That is deliberate — it exercises both sides of the ReLU kink, which is where a naive implementation gets the gradient wrong. The <a href="https://github.com/karpathy/micrograd" target="_blank" rel="noopener">README</a>'s worked example uses the same expression and publishes the numbers, so you can check yourself without running anything: <span class="mono">g.data</span> is 24.7041, <span class="mono">a.grad</span> is 138.8338, <span class="mono">b.grad</span> is 645.5773.</p>
+
+  <h2>demo.ipynb: the three things the lecture left out</h2>
+
+  <p>The last file in the repo is the one that shows what the toy loop was missing. <a href="https://github.com/karpathy/micrograd/blob/master/demo.ipynb" target="_blank" rel="noopener">demo.ipynb</a> trains an <span class="mono">MLP(2, [16, 16, 1])</span> — 337 parameters, against the lecture net's 41 — to separate two interleaved crescents of points, and it produces an actual decision surface at the end. Three additions carry it from demonstration to something recognisably like practice, and Karpathy names all three while explicitly declining to teach them here.</p>
+
+  <table class="kv">
+    <tr><th>Addition</th><th>What it is</th><th>Why the lecture could skip it</th></tr>
+    <tr><td>Batching</td><td>The loss takes an optional <span class="mono">batch_size</span> and, when given one, forwards a random subset of rows instead of the whole dataset.</td><td>With four examples, "the batch" and "the dataset" are the same thing. With a million rows a full forward pass per step is unaffordable, and the random subset is a cheap unbiased estimate of the gradient.</td></tr>
+    <tr><td>A different loss + L2 regularisation</td><td>An SVM max-margin hinge, <span class="mono">(1 + -yi*scorei).relu()</span> averaged over the batch, plus <span class="mono">alpha * sum(p*p)</span> with <span class="mono">alpha = 1e-4</span>.</td><td>Mean squared error was chosen for being the simplest thing that is obviously a Value. The hinge and the penalty term are about generalisation, which never came up because the toy net was asked to memorise four points.</td></tr>
+    <tr><td>A learning-rate schedule</td><td><span class="mono">learning_rate = 1.0 - 0.9*k/100</span> over 100 steps — 1.0 at the start, 0.109 at the end.</td><td><a class="lnk" href="p07.html">P7</a> showed by hand that a big step converges fast and then overshoots. Decay is the systematic version of the thing Karpathy was doing manually by editing the number between cells.</td></tr>
+  </table>
+
+  <p>Everything else in that notebook is the loop you already know: forward, <span class="mono">zero_grad</span>, <span class="mono">backward</span>, nudge every parameter against its gradient. The regularisation term is a nice illustration of why it was worth making the loss a Value rather than a float — <span class="mono">sum(p*p for p in model.parameters())</span> is an expression over the parameters themselves, so <span class="mono">backward()</span> pushes a gradient into every weight through a path that never touched the data at all.</p>
+
+  <h2>Finding 1 − tanh² inside PyTorch</h2>
+
+  <p>Then the part of this section that is not a repo tour. Karpathy sets a concrete target: in micrograd the backward for tanh is <span class="mono">(1 - t**2) * out.grad</span>, where <span class="mono">t</span> is the <em>output</em> of the tanh and the multiplication is the chain rule. Somewhere in PyTorch there must be a line that does that. He goes to find it, on camera, and mostly fails.</p>
+
+  <blockquote class="q">these libraries unfortunately they grow in size and entropy … they're meant to be used, not really inspected<span class="cite"><a href="https://youtu.be/VMj-3S1tku0?t=8502" target="_blank" rel="noopener">141:42</a></span></blockquote>
+
+  <p>He reports about fifteen minutes of searching, 2,800 matches for "tanh" across 406 files, and eventual success only by stumbling across a GitHub issue where someone else had already located the kernels. That is a real experience of a large C++ codebase and it is good that it is in the video unedited. But it is also avoidable, and the disciplined route is worth knowing, because it generalises to every operation in the framework rather than just this one. PyTorch keeps a single declarative table of derivatives, and it is grep-able:</p>
+
+  <table class="kv">
+    <tr><th>Layer</th><th>Where</th><th>What it says</th></tr>
+    <tr><td>The derivative table</td><td><a href="https://github.com/pytorch/pytorch/blob/main/tools/autograd/derivatives.yaml#L1787" target="_blank" rel="noopener">tools/autograd/derivatives.yaml</a></td><td><span class="mono">tanh</span>'s gradient with respect to its input is <span class="mono">tanh_backward(grad, result)</span> — note <span class="mono">result</span>, the saved output, exactly as in micrograd.</td></tr>
+    <tr><td>The dispatch stub</td><td><span class="mono">aten/src/ATen/native/BinaryOps.h</span></td><td><span class="mono">tanh_backward_stub</span> — one symbol, filled in per device at registration time.</td></tr>
+    <tr><td>CPU kernel</td><td><a href="https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/cpu/BinaryOpsKernel.cpp#L974" target="_blank" rel="noopener">cpu/BinaryOpsKernel.cpp</a></td><td>Three branches — complex, reduced-precision float, everything else — each computing <span class="mono">a * (1 - b*b)</span> scalar-wise and again vectorised.</td></tr>
+    <tr><td>CUDA kernel</td><td><a href="https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/cuda/BinaryMiscBackwardOpsKernels.cu#L119" target="_blank" rel="noopener">cuda/BinaryMiscBackwardOpsKernels.cu</a></td><td>The same rule, in a device lambda, in one line.</td></tr>
+  </table>
+
+  <p>Codebase archaeology has a half-life, and this one has decayed since 2022. The CPU kernel is still in the file Karpathy landed on, but the CUDA kernel he showed has since been split out of <span class="mono">BinaryMiscOpsKernels.cu</span> into a dedicated backward-ops file. Line numbers here are from <span class="mono">main</span> as of September 2026 and will drift again; if an anchor lands in the wrong place, search the file for <span class="mono">tanh_backward_kernel</span> and you will be within a few lines of it. The function names have been stable for years even as the files have moved, which is the general lesson: navigate by symbol, cite by line only with a date attached.</p>
+
+  <pre class="code-block"><code># tools/autograd/derivatives.yaml
+- name: tanh(Tensor self) -&gt; Tensor
+  self: tanh_backward(grad, result)
+  result: auto_element_wise
+
+// aten/src/ATen/native/cpu/BinaryOpsKernel.cpp — the plain floating-point branch
+AT_DISPATCH_FLOATING_TYPES(iter.dtype(), "tanh_backward_cpu", [&amp;]() {
+  auto one_vec = Vectorized&lt;scalar_t&gt;(scalar_t{1});
+  cpu_kernel_vec(
+      iter,
+      [=](scalar_t a, scalar_t b) -&gt; scalar_t {
+        return a * (scalar_t{1} - b * b);      // &lt;-- (1 - t**2) * out.grad
+      },
+      [=](Vectorized&lt;scalar_t&gt; a, Vectorized&lt;scalar_t&gt; b) {
+        return a * (one_vec - b * b);          // ...and again, eight lanes at a time
+      });
+});
+
+// aten/src/ATen/native/cuda/BinaryMiscBackwardOpsKernels.cu — the GPU version
+AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16, dtype, "tanh_backward_cuda", [&amp;]() {
+  gpu_kernel(iter, [] GPU_LAMBDA(scalar_t a, scalar_t b) -&gt; scalar_t {
+    return a * (scalar_t{1.} - b * b);
+  });
+});</code></pre>
+
+  <p>Read <span class="mono">a</span> as <span class="mono">out.grad</span> and <span class="mono">b</span> as <span class="mono">t</span> and the correspondence with your notebook is exact, character for character in the arithmetic. Karpathy notes on camera that the CPU kernel is long and wonders aloud why it lives in a file about <em>binary</em> operations when tanh takes one argument. Both puzzles have the same answer, and it is a good one to hold onto. The length is dtype coverage: a branch for complex numbers, a branch for bfloat16 and half that upcasts to float before doing the arithmetic and casts back, a branch for ordinary floats and doubles — and inside each, both a scalar lambda and a SIMD lambda so the loop can be vectorised. The filename is about arity of the <em>backward</em> function, not the forward one: <span class="mono">tanh_backward(grad_output, output)</span> consumes two tensors elementwise, so as far as the kernel machinery is concerned it is a binary elementwise op, and it gets filed with the other binary elementwise ops. Nothing is misplaced; the taxonomy is just one level down from where you were reading.</p>
+
+  <h2>Registering your own Lego block</h2>
+
+  <p>The last technical minute of the lecture closes a loop that was opened in <a class="lnk" href="p04.html">P4</a>. Micrograd's design rule was: to add an operation, supply its forward value and a closure that pushes gradient into its inputs. PyTorch's rule is the same rule with a class instead of a closure. Karpathy pulls up the <a href="https://pytorch.org/tutorials/beginner/examples_autograd/polynomial_custom_function.html" target="_blank" rel="noopener">official example</a>, which implements the third Legendre polynomial, ½(5x³ − 3x), as a custom autograd node:</p>
+
+  <pre class="code-block"><code>class LegendrePolynomial3(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, input):
+        ctx.save_for_backward(input)                 # micrograd: capturing self in the closure
+        return 0.5 * (5 * input ** 3 - 3 * input)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, = ctx.saved_tensors                   # micrograd: reading self.data
+        return grad_output * 1.5 * (5 * input ** 2 - 1)   # local derivative x upstream grad</code></pre>
+
+  <blockquote class="q">you can use this as a lego block in a larger lego castle of all the different lego blocks that PyTorch already has<span class="cite"><a href="https://youtu.be/VMj-3S1tku0?t=8655" target="_blank" rel="noopener">144:15</a></span></blockquote>
+
+  <p>Line up the three pieces against the engine you built. <span class="mono">ctx.save_for_backward</span> is doing what Python's closure did for free when <span class="mono">_backward</span> captured <span class="mono">self</span> and <span class="mono">out</span>; PyTorch needs it explicit because it must be able to free the graph and because the saved tensors participate in its own correctness checks. <span class="mono">grad_output</span> is <span class="mono">out.grad</span>. The <span class="mono">return</span> is the local derivative multiplied by the upstream gradient — the chain rule, written once, by you, per operation. That really is the entire contract: PyTorch does not need to know anything about your function beyond how to evaluate it and how to differentiate it locally, and in exchange it will route gradients through it from anywhere in an arbitrarily large graph. Which is precisely the deal micrograd offers, at a different scale.</p>
+
+  <div class="callout">Carry this away: the difference between a 94-line autograd engine and a production framework is not conceptual, it is <em>coverage</em>. Same chain rule, same saved output, same local-derivative-times-upstream multiply — plus complex and reduced-precision dtypes, two device backends, vectorised inner loops, a dispatch table, and a declarative derivative registry so the whole thing can be generated rather than hand-written. When you next need to know what a framework really does with some operation, look for its derivative table first; the kernels are an implementation detail of the entry you find there.</div>
+
+  <h2 id="code">The code at the end of this part</h2>
+
+  <p>Not a notebook cell this time — the finished library, in full. This is the file the lecture's opening promise was about, and after two and a quarter hours there should be nothing in it you cannot account for.</p>
+
+  <pre class="code-block"><code>class Value:
+    """ stores a single scalar value and its gradient """
+
+    def __init__(self, data, _children=(), _op=''):
+        self.data = data
+        self.grad = 0
+        # internal variables used for autograd graph construction
+        self._backward = lambda: None
+        self._prev = set(_children)
+        self._op = _op # the op that produced this node, for graphviz / debugging / etc
+
+    def __add__(self, other):
+        other = other if isinstance(other, Value) else Value(other)
+        out = Value(self.data + other.data, (self, other), '+')
+
+        def _backward():
+            self.grad += out.grad
+            other.grad += out.grad
+        out._backward = _backward
+
+        return out
+
+    def __mul__(self, other):
+        other = other if isinstance(other, Value) else Value(other)
+        out = Value(self.data * other.data, (self, other), '*')
+
+        def _backward():
+            self.grad += other.data * out.grad
+            other.grad += self.data * out.grad
+        out._backward = _backward
+
+        return out
+
+    def __pow__(self, other):
+        assert isinstance(other, (int, float)), "only supporting int/float powers for now"
+        out = Value(self.data**other, (self,), f'**{other}')
+
+        def _backward():
+            self.grad += (other * self.data**(other-1)) * out.grad
+        out._backward = _backward
+
+        return out
+
+    def relu(self):
+        out = Value(0 if self.data &lt; 0 else self.data, (self,), 'ReLU')
+
+        def _backward():
+            self.grad += (out.data &gt; 0) * out.grad
+        out._backward = _backward
+
+        return out
+
+    def backward(self):
+
+        # topological order all of the children in the graph
+        topo = []
+        visited = set()
+        def build_topo(v):
+            if v not in visited:
+                visited.add(v)
+                for child in v._prev:
+                    build_topo(child)
+                topo.append(v)
+        build_topo(self)
+
+        # go one variable at a time and apply the chain rule to get its gradient
+        self.grad = 1
+        for v in reversed(topo):
+            v._backward()
+
+    def __neg__(self): # -self
+        return self * -1
+
+    def __radd__(self, other): # other + self
+        return self + other
+
+    def __sub__(self, other): # self - other
+        return self + (-other)
+
+    def __rsub__(self, other): # other - self
+        return other + (-self)
+
+    def __rmul__(self, other): # other * self
+        return self * other
+
+    def __truediv__(self, other): # self / other
+        return self * other**-1
+
+    def __rtruediv__(self, other): # other / self
+        return other * self**-1
+
+    def __repr__(self):
+        return f"Value(data={self.data}, grad={self.grad})"</code></pre>
+
+  <ul class="readings">
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L5" target="_blank" rel="noopener">Lines 5–11, the constructor</a> — five fields. Two are the mathematics (<span class="mono">data</span>, <span class="mono">grad</span>); two are the graph (<span class="mono">_backward</span>, <span class="mono">_prev</span>); one is for drawing pictures (<span class="mono">_op</span>). The default <span class="mono">_backward</span> is a lambda that does nothing, which is exactly right for a leaf — a weight has no children to push gradient into.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L17" target="_blank" rel="noopener">Lines 17–19, the add closure</a> — <span class="mono">+=</span>, never <span class="mono">=</span>. If a value feeds two consumers, both of their closures write to it and the contributions must sum; assignment would let the last writer win. This is the bug from <a class="lnk" href="p04.html">P4</a>, fixed permanently by a two-character choice.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L28" target="_blank" rel="noopener">Lines 28–30, the multiply closure</a> — each input's local derivative is the <em>other</em> input's data. Note it reads <span class="mono">other.data</span>, not <span class="mono">other.grad</span>; local derivatives come from the forward pass, which is why the forward has to run first and why its intermediate values must survive.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L35" target="_blank" rel="noopener">Lines 35–43, <span class="mono">__pow__</span></a> — the assert restricts the exponent to a plain number, which keeps the rule to the schoolbook <span class="mono">n·x^(n−1)</span> and avoids needing a gradient with respect to the exponent. It is also what makes division work: <span class="mono">a / b</span> is <span class="mono">a * b**-1</span>, so one rule buys two operations.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L54" target="_blank" rel="noopener">Lines 54–70, <span class="mono">backward</span></a> — build a topological order by depth-first post-order with a visited set, seed <span class="mono">self.grad = 1</span> because dL/dL is 1, then walk the list in reverse. The ordering is the whole correctness argument: a node's <span class="mono">_backward</span> may only run once every consumer downstream of it has already deposited its contribution, and reverse topological order is precisely the guarantee that this has happened.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L72" target="_blank" rel="noopener">Lines 72–91, the operator tail</a> — seven dunder methods, zero new gradient rules. This is where the "only four primitives" design pays off, and it is also what lets <span class="mono">2 * x</span> and <span class="mono">10.0 / f</span> work with a raw Python number on the left.</li>
+    <li>The neural net library on top is <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py" target="_blank" rel="noopener">nn.py</a>: <span class="mono">Module</span> at <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L4" target="_blank" rel="noopener">lines 4–11</a>, <span class="mono">Neuron</span> at <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L13" target="_blank" rel="noopener">13–28</a>, <span class="mono">Layer</span> at <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L30" target="_blank" rel="noopener">30–43</a>, <span class="mono">MLP</span> at <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L45" target="_blank" rel="noopener">45–60</a>.</li>
+  </ul>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"I installed micrograd and <span class="mono">.tanh()</span> doesn't exist."</b> Correct — it never shipped. Karpathy says on camera at <a href="https://youtu.be/VMj-3S1tku0?t=8225" target="_blank" rel="noopener">137:05</a> that tanh is not present "as of right now" but that he intends to add it later; as of this writing, years on, <span class="mono">engine.py</span> still exposes only <span class="mono">relu</span>. So every notebook you wrote in <a class="lnk" href="p03.html">P3</a>–<a class="lnk" href="p07.html">P7</a> uses an operation the published library does not have. This is not a version mismatch to debug, it is a genuine divergence between the lecture and the repo, and adding it back is a ten-line exercise (below).</li>
+    <li><b>"Why is tanh's backward in a file called <span class="mono">BinaryOpsKernel</span>? tanh takes one argument."</b> Karpathy flags this as odd at <a href="https://youtu.be/VMj-3S1tku0?t=8594" target="_blank" rel="noopener">143:14</a> and moves on. The resolution: the kernel is not for <span class="mono">tanh</span>, it is for <span class="mono">tanh_backward</span>, whose signature is <span class="mono">(grad_output, output)</span> — two tensors in, one out, elementwise. That is a binary elementwise op by the only definition the kernel layer cares about, so it is filed with the others. The forward <span class="mono">tanh</span> kernel is where you would expect it — in <span class="mono">UnaryOpsKernel.cpp</span>, in the same directory.</li>
+    <li><b>"The library's <span class="mono">MLP</span> makes the last layer linear — is that a bug?"</b> No, and it is the change most likely to bite if you copy the lecture's version into a real problem. <span class="mono">nonlin=i != len(nouts) - 1</span> turns off the nonlinearity on the output layer only. A ReLU'd output can never be negative, and a tanh'd output can never leave (−1, 1); either one silently caps what your loss can ask for. The moons demo uses a max-margin loss that wants unbounded signed scores, so the head must be linear. The lecture's toy targets happened to be ±1, which is exactly the range tanh can hit, which is why the issue never surfaced.</li>
+    <li><b>"Your line numbers into PyTorch don't match what I'm seeing."</b> Expect that. The tanh backward code has already moved once since the video — the CUDA kernel Karpathy showed in <span class="mono">BinaryMiscOpsKernels.cu</span> now lives in <span class="mono">BinaryMiscBackwardOpsKernels.cu</span> — and the CPU file has grown by hundreds of lines. Anchors on this page point at <span class="mono">main</span> as of September 2026. The durable handles are the symbol names: <span class="mono">tanh_backward</span> in <span class="mono">derivatives.yaml</span>, <span class="mono">tanh_backward_stub</span> for the dispatch, <span class="mono">tanh_backward_kernel</span> / <span class="mono">tanh_backward_kernel_cuda</span> for the implementations. Search for those, not for line 974.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py" target="_blank" rel="noopener">micrograd/engine.py</a> — Andrej Karpathy (2020–) · The whole autograd engine in 94 lines; the file the lecture's opening promise was about. Read <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L54" target="_blank" rel="noopener">lines 54–70</a> last — the topological sort is the only non-obvious thing in it.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py" target="_blank" rel="noopener">micrograd/nn.py</a> — Andrej Karpathy · Sixty lines of neural net library, of which the only idea not in the lecture is the <span class="mono">Module</span> base class at <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L4" target="_blank" rel="noopener">lines 4–11</a>, deliberately shaped like PyTorch's <a href="https://pytorch.org/docs/stable/generated/torch.nn.Module.html" target="_blank" rel="noopener">nn.Module</a>.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/test/test_engine.py" target="_blank" rel="noopener">test/test_engine.py</a> — Andrej Karpathy · The claim "we agree with PyTorch" as sixty-seven runnable lines. Worth reading for the exact-equality/tolerance split between the two tests.</li>
+    <li><a href="https://github.com/pytorch/pytorch/blob/main/tools/autograd/derivatives.yaml#L1787" target="_blank" rel="noopener">PyTorch: derivatives.yaml, the tanh entry</a> — PyTorch contributors · The front door Karpathy did not use. One declarative table mapping every differentiable operation to its gradient formula; if you ever want to know what a framework really computes for an op, start here rather than in the kernels.</li>
+    <li><a href="https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/cpu/BinaryOpsKernel.cpp#L974" target="_blank" rel="noopener">PyTorch: tanh_backward CPU kernel</a> — PyTorch contributors · <em>field map extra</em>: the line Karpathy hunted for, at its current address, alongside the <a href="https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/cuda/BinaryMiscBackwardOpsKernels.cu#L119" target="_blank" rel="noopener">CUDA kernel</a>, which has moved files since the video was recorded.</li>
+    <li><a href="https://pytorch.org/tutorials/beginner/examples_autograd/polynomial_custom_function.html" target="_blank" rel="noopener">PyTorch: Defining New autograd Functions</a> — PyTorch tutorials · The <span class="mono">LegendrePolynomial3</span> example from <a href="https://youtu.be/VMj-3S1tku0?t=8625" target="_blank" rel="noopener">143:45</a>, in full and runnable. Pair it with the <a href="https://pytorch.org/docs/stable/notes/extending.html" target="_blank" rel="noopener">Extending PyTorch notes</a> for the rules on saving tensors and the gradient-checking utility.</li>
+    <li><a href="https://www.nature.com/articles/323533a0" target="_blank" rel="noopener">Learning representations by back-propagating errors</a> — Rumelhart, Hinton &amp; Williams (1986) · <em>field map extra</em>: four pages, and the algorithm you just implemented. Useful as a check on how little has changed; for a modern treatment of the same material with worked circuit diagrams, the <a href="https://cs231n.github.io/optimization-2/" target="_blank" rel="noopener">CS231n backprop notes</a> are the standard companion.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Put tanh back into the real engine</b><span class="code">code</span> — clone <a href="https://github.com/karpathy/micrograd" target="_blank" rel="noopener">micrograd</a> and add the operation the lecture used but the library never shipped. (1) Write <span class="mono">tanh</span> in <span class="mono">engine.py</span> next to <span class="mono">relu</span>, in the library's style — compute the value, capture it, and have <span class="mono">_backward</span> do <span class="mono">self.grad += (1 - t*t) * out.grad</span>. (2) Decide deliberately whether to compute <span class="mono">t</span> via <span class="mono">math.tanh</span> or the exponential form from <a class="lnk" href="p05.html">P5</a>, and say which is more numerically stable for large |x| and why. (3) Add a third test to <span class="mono">test/test_engine.py</span> that runs an expression containing your tanh through both micrograd and <span class="mono">torch.tanh</span>, asserting forward and gradient agreement to <span class="mono">1e-6</span>. (4) Give <span class="mono">Neuron</span> a <span class="mono">nonlin</span> option that selects tanh, and check the moons demo still converges. A good answer notices that the backward reads the saved output, never recomputes the tanh, and works whether <span class="mono">t</span> is captured as a local or read from <span class="mono">out.data</span>.</li>
+    <li><b>Re-run the treasure hunt, today</b><span class="code">code</span> — Karpathy's search took fifteen minutes and ended at a GitHub issue. Do it in five, from the top. (1) Find the <span class="mono">tanh</span> entry in <a href="https://github.com/pytorch/pytorch/blob/main/tools/autograd/derivatives.yaml" target="_blank" rel="noopener">derivatives.yaml</a> and note that its gradient is expressed in terms of <span class="mono">result</span>, the saved output. (2) Grep for <span class="mono">tanh_backward_stub</span> to find the dispatch declaration and both registrations. (3) Open the CPU and CUDA kernels and write down the current file and line for the plain-float branch of each. (4) Compare against the anchors on this page and record what has moved. (5) Then do the same for one operation this lecture never covered — <span class="mono">sigmoid</span> is a good second, since its backward sits directly above tanh's in both kernel files. A good answer ends with a repeatable four-step recipe you would trust for any op, and an explanation of why <span class="mono">grad_output</span> and the saved output are the only two tensors the kernel needs.</li>
+    <li><b>The official exercise notebook</b> — Karpathy sets exactly one exercise for the whole lecture, in the video description: <a href="https://colab.research.google.com/drive/1FPTx1RXtBfc4MaTkf7viZZD4U2F9gtKN?usp=sharing" target="_blank" rel="noopener">this Colab</a>. Its three sections map back across the map — deriving a gradient analytically and then numerically belongs to <a class="lnk" href="p01.html">P1</a>, extending <span class="mono">Value</span> with the operations a softmax and a negative-log-likelihood loss need belongs to <a class="lnk" href="p05.html">P5</a>, and the training questions belong to <a class="lnk" href="p07.html">P7</a>. The section that belongs <em>here</em> is the last one: verifying your gradients against PyTorch's. Do it the way <span class="mono">test_engine.py</span> does — write the expression twice, once in your <span class="mono">Value</span> and once in tensors with <span class="mono">requires_grad=True</span>, and assert on both the forward number and every input gradient rather than eyeballing them. If a gradient disagrees, the fastest bisect is to shrink the expression until it doesn't.</li>
+  </ol>
+
+  <p><b>What comes next.</b> The next video in <a href="https://www.youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ" target="_blank" rel="noopener">Neural Networks: Zero to Hero</a> is <a href="https://youtu.be/PaCmpygFfXo" target="_blank" rel="noopener">makemore part 1</a>, which drops the scalar engine for PyTorch tensors and trains a bigram character-level language model — the first time the loss becomes a negative log likelihood and the first time the data is something you did not type by hand. Everything about the training loop will be familiar; what changes is that gradients now flow through arrays rather than one number at a time. The series climbs from there to a transformer, and the seventh video, <em>Let's build GPT</em>, is mapped the same way this one is at <a href="https://idvorkin-ai-tools.github.io/build-gpt-field-map/" target="_blank" rel="noopener">Let's build GPT, mapped</a>. If you would rather see how far the engine on this page can be pushed instead, Karpathy's <a href="https://karpathy.github.io/2026/02/12/microgpt/" target="_blank" rel="noopener">microgpt</a> trains a GPT-2-class transformer in dependency-free Python on a descendant of this very <span class="mono">Value</span> class — a direct answer to "could you actually build something real out of this?"</p>
+
+  <p>And then the outtakes at <a href="https://youtu.be/VMj-3S1tku0?t=8720" target="_blank" rel="noopener">145:20</a>, in which the man who just derived backpropagation from first principles cannot reliably say the word "micrograd".</p>
+
+  <div class="callout">Next: <a class="lnk" href="../index.html#exercises">the exercise for the whole lecture</a> · Back to the <a class="lnk" href="../index.html#real">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "building micrograd" (2022), part 08. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

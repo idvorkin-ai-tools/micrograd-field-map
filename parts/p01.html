@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P01 What micrograd is, and what a derivative is — micrograd, mapped</title>
+<meta name="description" content="Karpathy's first 19 minutes: what an autograd engine does, and the bump-it-by-h definition of the derivative that the whole lecture runs on." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>MICROGRAD&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#derivatives">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box wb mono">PART 01 · DERIVATIVES</span><span class="mono">00:00–19:09 · 19 min</span></div>
+  <h1>What micrograd is, and what a derivative is</h1>
+  <div class="authors">Andrej Karpathy · building micrograd (2022) · part 01 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Video</span><a href="https://youtu.be/VMj-3S1tku0?t=0" target="_blank" rel="noopener">Start this part at 00:00 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Code</span><a href="https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/micrograd/micrograd_lecture_first_half_roughly.ipynb" target="_blank" rel="noopener">micrograd_lecture_first_half_roughly.ipynb · the opening cells: f(x), the numerical derivative, d = a*b + c ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-0">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> Micrograd is an autograd engine: you build a mathematical expression out of a wrapper object called <span class="mono">Value</span>, call <span class="mono">.backward()</span> on the output, and every input in the expression is left holding the derivative of that output with respect to itself. That derivative is not a symbolic formula you derived on paper — it is a <em>slope</em>, the answer to "if I nudge this input by a hair, how much and in which direction does the output move?" Karpathy spends these nineteen minutes making sure you feel that definition in your fingers, by literally bumping numbers by <span class="mono">h = 0.001</span> and dividing. The one thing to carry forward: a gradient is a per-input sensitivity number, and the entire rest of the lecture is machinery for getting all of them cheaply.</div>
+
+  <p class="lead">This part is the setup, and it does two jobs that look unrelated but are not. First it shows you the finished toy — an expression graph, a <span class="mono">.backward()</span> call, gradients appearing on inputs — so you know what you are building toward and can judge how small the finished thing is. Then it deliberately backs all the way off to high-school calculus and re-derives what a derivative <em>is</em>, numerically, with no symbols. Those two halves meet in the third section of the lecture: the numbers that <span class="mono">.backward()</span> fills in are exactly the numbers you would get by bumping each input by hand, and the reason to build the engine at all is that bumping by hand does not scale.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=0" target="_blank" rel="noopener">00:00</a> — Intro: a blank notebook now, a trained neural net by the end, with nothing hidden.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=25" target="_blank" rel="noopener">00:25</a> — Micrograd overview: build an expression out of <span class="mono">Value</span> objects, read <span class="mono">g.data</span> for the forward pass, call <span class="mono">g.backward()</span> and read <span class="mono">a.grad</span> and <span class="mono">b.grad</span>.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=274" target="_blank" rel="noopener">04:34</a> — The demo expression is nonsense on purpose; what we actually care about is neural nets, which are also just expressions.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=334" target="_blank" rel="noopener">05:34</a> — Scalar-valued on purpose: tensors are packaging for parallelism, and none of the math changes.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=410" target="_blank" rel="noopener">06:50</a> — Two files, roughly 150 lines total: <span class="mono">engine.py</span> is the autograd, <span class="mono">nn.py</span> is the whole neural-net library.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=488" target="_blank" rel="noopener">08:08</a> — Derivative of a function of one input: define <span class="mono">f(x) = 3x² − 4x + 5</span>, evaluate it, plot the parabola.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=606" target="_blank" rel="noopener">10:06</a> — Why we will not do symbolic differentiation, and what the limit definition actually says.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=673" target="_blank" rel="noopener">11:13</a> — The bump experiment at <span class="mono">x = 3</span> with <span class="mono">h = 0.001</span>: rise over run gives 14.003, and the analytic answer is 14.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=795" target="_blank" rel="noopener">13:15</a> — The same experiment at <span class="mono">x = −3</span> (negative slope, −22) and near <span class="mono">x = 2/3</span> (slope zero).</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=852" target="_blank" rel="noopener">14:12</a> — Several inputs: <span class="mono">d = a*b + c</span> with <span class="mono">a=2, b=−3, c=10</span>, and three separate derivatives to find.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=978" target="_blank" rel="noopener">16:18</a> — Predict the sign before running it: bumping <span class="mono">a</span> makes <span class="mono">d</span> go <em>down</em>, slope −3; then <span class="mono">b</span> gives 2 and <span class="mono">c</span> gives 1.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1128" target="_blank" rel="noopener">18:48</a> — Neural nets are enormous expressions, so we need a data structure that remembers them. Enter <span class="mono">Value</span>, in P2.</li>
+  </ul>
+
+  <h2>What an autograd engine buys you</h2>
+
+  <p>Strip the marketing off and micrograd does one thing: it lets you write ordinary arithmetic in Python and then, afterwards, ask a question about that arithmetic that ordinary arithmetic cannot answer. The question is "how sensitive was the result to each of the numbers I put in?"</p>
+
+  <p>The demo Karpathy scrolls through is the README example from the repo. Two inputs, <span class="mono">a = Value(-4.0)</span> and <span class="mono">b = Value(2.0)</span>, get pushed through a deliberately silly chain — adds, multiplies, a power, a negation, a couple of ReLUs, a division — producing an output <span class="mono">g</span>. The forward pass is unremarkable: <span class="mono">g.data</span> is <b>24.7041</b>, which is just the number the arithmetic produces. The interesting call is <span class="mono">g.backward()</span>. After it returns, <span class="mono">a.grad</span> is <b>138.8338</b> and <span class="mono">b.grad</span> is <b>645.5773</b>. (In the video he reads these off screen as "138" and "645"; the repo's own README prints them to four decimals.)</p>
+
+  <p>Read those two numbers as physical claims about the expression, not as abstract calculus. They say: if you increase <span class="mono">a</span> by a tiny amount, <span class="mono">g</span> increases about 138.8 times as fast; do the same to <span class="mono">b</span> and <span class="mono">g</span> climbs about 645.6 times as fast. Both inputs push <span class="mono">g</span> up, and <span class="mono">b</span> has roughly 4.6× the leverage. Nobody wrote a formula for <span class="mono">dg/da</span>. The engine walked backwards through the graph it had recorded during the forward pass, applying the chain rule node by node, and left the answer sitting on each input.</p>
+
+  <p>Two framings from this stretch are worth holding onto. The first is that the demo expression is meaningless <em>on purpose</em>:</p>
+
+  <blockquote class="q off">This expression, by the way, is completely meaningless. I just made it up. I'm just flexing about the kinds of operations that are supported by micrograd.<span class="cite"><a href="https://youtu.be/VMj-3S1tku0?t=274" target="_blank" rel="noopener">04:34</a></span></blockquote>
+
+  <p>The point of the flex is that backpropagation does not know or care what a neural network is. It works on arbitrary differentiable expressions; neural networks just happen to be a particular family of them, and one we care about. Keeping those two ideas separate — the general algorithm, the specific application — is what makes the rest of the lecture legible.</p>
+
+  <p>The second framing is the scale one. Micrograd works on individual scalars: a neuron is chopped into its component adds and multiplies, and every one of them is a node. That is not a pedagogical shortcut around some harder "real" math. It is the other way around. Real libraries pack thousands of scalars into tensors so that a GPU can do the adds in parallel, and none of the calculus changes when they do. Karpathy is explicit that this is purely efficiency. He is also, quietly, making a claim about how much of deep learning is actually conceptual:</p>
+
+  <blockquote class="q off">My claim is that micrograd is what you need to train neural networks, and everything else is just efficiency.<span class="cite"><a href="https://youtu.be/VMj-3S1tku0?t=410" target="_blank" rel="noopener">06:50</a></span></blockquote>
+
+  <p>He backs it with a file count. The repo has two source files. <span class="mono">engine.py</span> is the autograd engine and knows nothing about neural nets; <span class="mono">nn.py</span> is the entire neural-network library on top of it. He calls them "100 lines" and "a joke", respectively; if you count the current master today it is <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py" target="_blank" rel="noopener">94 lines</a> and <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py" target="_blank" rel="noopener">60 lines</a>. That is the whole target of the lecture, and it is worth opening both files now, failing to understand them, and coming back at the end.</p>
+
+  <h2>The derivative, without any symbols</h2>
+
+  <p>At 08:08 the lecture restarts from nothing. New function, chosen to be boring: <span class="mono">f(x) = 3x² − 4x + 5</span>. Call it at 3.0 and you get 20.0. Plot it over <span class="mono">np.arange(-5, 5, 0.25)</span> and you get a parabola with its minimum a bit right of zero.</p>
+
+  <p>Now the question: what is the derivative of this at a given <span class="mono">x</span>? Everyone in the audience knows the symbolic route — apply the power rule, get <span class="mono">6x − 4</span>, plug in. Karpathy refuses it, and the refusal is the load-bearing part of the whole video:</p>
+
+  <blockquote class="q off">No one in neural networks actually writes out the expression for the neural net. It would be a massive expression… no one actually derives the derivative.<span class="cite"><a href="https://youtu.be/VMj-3S1tku0?t=606" target="_blank" rel="noopener">10:06</a></span></blockquote>
+
+  <p>So instead he goes back to the limit definition — the derivative at <span class="mono">x</span> is the limit as <span class="mono">h → 0</span> of <span class="mono">(f(x+h) − f(x)) / h</span> — and reads it as an experiment rather than a formula. Nudge the input up by a small <span class="mono">h</span>. Measure how much the output moved. Divide by how much you moved the input, because you want a rate, not a raw change. That is rise over run, and the resulting number is a slope: sign tells you which way the function goes, magnitude tells you how hard.</p>
+
+  <p>He takes <span class="mono">h = 0.001</span> — the limit says take it to zero, but you cannot type zero — and evaluates at <span class="mono">x = 3</span>. Before running it he asks you to predict: is <span class="mono">f(3.001)</span> a bit above 20 or a bit below? The parabola is climbing there, so above. The measured slope comes out <b>14.003</b>, and the analytic answer, <span class="mono">6(3) − 4</span>, is <b>14</b>. Close enough to trust the method, off by exactly the amount the method should be off by.</p>
+
+  <p>Then he moves the probe. At <span class="mono">x = −3</span> the parabola is falling, so the slope must be negative; <span class="mono">6(−3) − 4 = −22</span>, and the numerical version agrees at about −21.997. And there is a point where the slope is zero — for this function at <span class="mono">x = 2/3</span> — where nudging the input barely moves the output at all. That flat point is the whole reason gradients are useful later: training is a search for somewhere the loss has stopped responding to the weights.</p>
+
+  <table class="kv">
+    <tr><th>Probe point</th><th>f(x)</th><th>Numerical slope, h = 0.001</th><th>Analytic 6x − 4</th><th>Reading</th></tr>
+    <tr><td><span class="mono">x = 3.0</span></td><td>20.0</td><td>14.003</td><td>14</td><td>climbing, steeply</td></tr>
+    <tr><td><span class="mono">x = −3.0</span></td><td>44.0</td><td>−21.997</td><td>−22</td><td>falling, steeply</td></tr>
+    <tr><td><span class="mono">x = 2/3</span></td><td>3.6667</td><td>≈ 3.0e−06</td><td>0</td><td>flat: the minimum</td></tr>
+  </table>
+
+  <p>He also flags, without dwelling on it, that shrinking <span class="mono">h</span> does not improve the answer forever — floating point has finite precision and at some point you "get into trouble". That hedge is worth unpacking, because it bites people the first time they write a gradient check; see <a class="lnk" href="#watch">Where people get stuck</a> below for the numbers.</p>
+
+  <h2>More than one input, and the shape of the answer changes</h2>
+
+  <p>At 14:12 the function grows a second and third input: <span class="mono">d = a*b + c</span>, with <span class="mono">a = 2.0</span>, <span class="mono">b = −3.0</span>, <span class="mono">c = 10.0</span>, so <span class="mono">d = 4.0</span>. Now "the derivative" is not one number. There are three, one per input, each answering the same bump question about a different knob while the other two are held still. This is the moment the object of interest quietly becomes a <em>vector</em> of sensitivities — which is what a gradient is, and what a neural network's training step consumes.</p>
+
+  <p>The procedure is the same three lines each time, and it is worth typing rather than reading: fix the inputs, compute <span class="mono">d1</span>, bump exactly one input by <span class="mono">h</span>, recompute as <span class="mono">d2</span>, and print <span class="mono">(d2 − d1) / h</span>.</p>
+
+  <p>The bit of teaching craft here is that he predicts the sign out loud before running the cell, and gets one of them counter-intuitively right. Bumping <span class="mono">a</span> upward makes <span class="mono">d</span> go <em>down</em>, because <span class="mono">a</span> is multiplied by a negative <span class="mono">b</span>: more <span class="mono">a</span> means more of a negative contribution. The printout shows <span class="mono">d2 = 3.999699999999999</span> against <span class="mono">d1 = 4.0</span> — down, as predicted — and the slope lands at −3, which is exactly <span class="mono">b</span>. (On screen the caption reads this as 3.9996; the actual float is 3.9997 with a trailing rounding artifact.)</p>
+
+  <table class="kv">
+    <tr><th>Bump (h = 0.0001)</th><th>d1</th><th>d2</th><th>Measured slope</th><th>Analytic</th><th>Why</th></tr>
+    <tr><td><span class="mono">a += h</span></td><td>4.0</td><td>3.9997</td><td>−3.0000000000108</td><td><span class="mono">∂d/∂a = b = −3</span></td><td>more <span class="mono">a</span>, more of a negative product</td></tr>
+    <tr><td><span class="mono">b += h</span></td><td>4.0</td><td>4.0002</td><td>2.0000000000042</td><td><span class="mono">∂d/∂b = a = 2</span></td><td><span class="mono">a</span> is positive, so <span class="mono">d</span> rises</td></tr>
+    <tr><td><span class="mono">c += h</span></td><td>4.0</td><td>4.0001</td><td>0.9999999999977</td><td><span class="mono">∂d/∂c = 1</span></td><td><span class="mono">c</span> is added straight on, one for one</td></tr>
+  </table>
+
+  <p>Look at the analytic column and notice something that will matter enormously in P3 and P4: <span class="mono">∂d/∂a</span> is not a constant, it is <span class="mono">b</span> — the value of the <em>other</em> input at that point. Local derivatives at a multiply node are the sibling's data. At an add node they are 1, for every input, always. Those two facts are the entire content of <span class="mono">__mul__._backward</span> and <span class="mono">__add__._backward</span> when the engine gets written, and you can already see them here in a cell with no classes in it.</p>
+
+  <div class="callout">Carry this away: a gradient is a measurement, not a formula. <span class="mono">a.grad = −3</span> means "push <span class="mono">a</span> up by ε and <span class="mono">d</span> moves down by 3ε." Every later abstraction — <span class="mono">_backward</span> closures, topological order, <span class="mono">p.data += -0.01 * p.grad</span> — exists only to produce that same measurement for millions of inputs without running millions of forward passes. If a gradient ever confuses you later in this lecture, come back and bump the thing by <span class="mono">h</span>.</div>
+
+  <h2>Why the hand method has to be replaced</h2>
+
+  <p>Karpathy closes the section by saying neural nets will be "pretty massive expressions", so we need a data structure to hold them — and cuts to <span class="mono">Value</span>. That is true but it undersells the actual problem, and it is worth stating the sharper version because it explains why backpropagation is a named algorithm rather than an obvious trick. <em>(Field-map extra: the cost argument below is not made explicitly in this part of the video; he gets to it implicitly in P3–P4.)</em></p>
+
+  <p>The bump method needs one full forward pass <em>per input</em>. Three inputs, three extra evaluations — fine. A small MLP has forty-one parameters, so forty-two evaluations — still fine. A network with a hundred million parameters needs a hundred million forward passes for one gradient, and you need a fresh gradient at every training step. Backpropagation gets all of them in a single backward pass whose cost is about the same as one forward pass, regardless of how many inputs there are. That asymmetry is why the rest of the lecture exists.</p>
+
+  <p>The bump method does not become useless, though. It becomes the <em>test</em>. Every time the engine produces a gradient you do not believe, you can re-derive it by nudging and dividing, exactly as in these cells — which is what PyTorch's own <a href="https://docs.pytorch.org/docs/stable/generated/torch.autograd.gradcheck.gradcheck.html" target="_blank" rel="noopener"><span class="mono">gradcheck</span></a> does to this day, and what Karpathy does by hand at several points later in the video.</p>
+
+  <h2 id="code">The code at the end of this part</h2>
+
+  <pre class="code-block"><code>import math
+import numpy as np
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+def f(x):
+  return 3*x**2 - 4*x + 5
+
+f(3.0)
+
+xs = np.arange(-5, 5, 0.25)
+ys = f(xs)
+plt.plot(xs, ys)
+
+h = 0.000001
+x = 2/3
+(f(x + h) - f(x))/h
+
+# les get more complex
+a = 2.0
+b = -3.0
+c = 10.0
+d = a*b + c
+print(d)
+
+h = 0.0001
+
+# inputs
+a = 2.0
+b = -3.0
+c = 10.0
+
+d1 = a*b + c
+c += h
+d2 = a*b + c
+
+print('d1', d1)
+print('d2', d2)
+print('slope', (d2 - d1)/h)</code></pre>
+
+  <p>Line by line, with the two places the saved notebook differs from the video:</p>
+
+  <ul class="readings">
+    <li><span class="mono">import math / numpy / matplotlib</span> — the boilerplate he pastes into every notebook. <span class="mono">math</span> is not used yet; it shows up in P3 for <span class="mono">math.exp</span> inside <span class="mono">tanh</span>. Note what is <em>absent</em>: no torch, no autograd, nothing that could be doing the work for us.</li>
+    <li><span class="mono">def f(x): return 3*x**2 - 4*x + 5</span> — deliberately a scalar function of a scalar, and deliberately a quadratic so its slope changes sign across the plotted range. Because it is written with numpy-compatible operators, the same <span class="mono">f</span> applies elementwise to the whole <span class="mono">xs</span> array a line later.</li>
+    <li><span class="mono">xs = np.arange(-5, 5, 0.25)</span> — 40 points, right endpoint excluded, purely to draw the parabola so you have a picture to point at when you talk about slope.</li>
+    <li><span class="mono">h = 0.000001; x = 2/3; (f(x + h) - f(x))/h</span> — the numerical-derivative cell, saved in the state he left it in after exploring. <b>In the video this cell starts as <span class="mono">h = 0.001</span> and <span class="mono">x = 3.0</span></b>, printing 14.003; he then walks it to <span class="mono">x = -3.0</span> for −22 and finally to <span class="mono">x = 2/3</span> for the flat point. If you are following along with the saved notebook, retype it at 3.0 first — the whole argument of the section is in the sequence, not the final cell.</li>
+    <li><span class="mono">d = a*b + c</span> — the three-input expression. Same numbers reappear in P2 as <span class="mono">Value(2.0, label='a')</span> and friends, and again in P3 as the front half of the <span class="mono">L = (a*b + c) * f</span> graph he backpropagates by hand. It is worth noticing that the arithmetic here is plain Python floats: nothing is being recorded, which is precisely the gap <span class="mono">Value</span> fills.</li>
+    <li><span class="mono">d1 = a*b + c; c += h; d2 = a*b + c</span> — the bump. <b>The saved cell bumps <span class="mono">c</span></b>, which is the last of the three he tries; the video runs <span class="mono">a += h</span> first (slope −3), then <span class="mono">b</span> (slope 2), then <span class="mono">c</span> (slope 1). Also note the mutation style: he modifies the input in place and rebuilds <span class="mono">d2</span>, so re-running the cell twice without re-fixing the inputs silently bumps <span class="mono">c</span> twice. That is the kind of stateful-notebook trap that will bite much harder in P7, where forgetting to reset something (the gradients) actually breaks training.</li>
+    <li>Nothing in this part exists in the finished library — <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L5" target="_blank" rel="noopener"><span class="mono">engine.py</span> line 5</a> is where <span class="mono">Value.__init__</span> begins, and P2 is where the lecture reaches it. These cells are scaffolding for your intuition, not code that survives.</li>
+  </ul>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"Why is the answer 14.003 and not 14? Is the method broken?"</b> — No, and the error is predictable. The one-sided difference <span class="mono">(f(x+h) − f(x))/h</span> has error proportional to <span class="mono">h</span>, so with <span class="mono">h = 0.001</span> you expect to be wrong in the third decimal, and you are: 14.00300000000243. Halve <span class="mono">h</span> and the error roughly halves. If you want a better estimate for free, use the central difference <span class="mono">(f(x+h) − f(x−h))/(2h)</span>, whose error scales with <span class="mono">h²</span> — it returns 14 to machine precision here. Karpathy stays with the one-sided version because it matches the textbook limit definition he is trying to make concrete.</li>
+    <li><b>"So make h tiny and it gets exact, right?"</b> — This is the trap he hedges about at 12:14 without showing. It gets better, then worse. On this function at <span class="mono">x = 3</span>: <span class="mono">h = 1e−3</span> gives 14.00300, <span class="mono">h = 1e−6</span> gives 14.000003, <span class="mono">h = 1e−10</span> gives 14.0000012 — and <span class="mono">h = 1e−14</span> gives <b>14.2109</b>, which is worse than where you started. The cause is catastrophic cancellation: <span class="mono">f(x+h)</span> and <span class="mono">f(x)</span> agree in the first fifteen digits, so subtracting them throws away almost all the significant bits, and then you divide the noise by a tiny number and amplify it. The sweet spot for a one-sided difference in float64 is around <span class="mono">h ≈ 1e−8</span>, i.e. roughly the square root of machine epsilon.</li>
+    <li><b>"Why is the derivative of a*b + c with respect to a equal to b — isn't a derivative supposed to be a function of the variable you differentiate?"</b> — It is a function of the whole input point; it just happens not to depend on <span class="mono">a</span> here. Holding <span class="mono">b</span> and <span class="mono">c</span> fixed, <span class="mono">d</span> is a straight line in <span class="mono">a</span> with slope <span class="mono">b</span>, so the sensitivity to <span class="mono">a</span> is whatever <span class="mono">b</span> currently is. Change <span class="mono">b</span> to 100 and <span class="mono">∂d/∂a</span> becomes 100. This is exactly why the engine has to record the forward values before it can run backwards: the local derivative at a multiply node <em>is</em> the other operand's data at that point.</li>
+    <li><b>"Scalar-valued sounds like a simplified version of the real thing."</b> — It is a simplified version of the <em>implementation</em>, not of the mathematics. A tensor library computes the same chain rule; it just applies it to arrays so the hardware can vectorize. If you understand backprop over scalars you understand backprop, and the delta to a real framework is memory layout, kernel fusion and hardware, not calculus. Treat the "everything else is efficiency" line as a real claim you will be able to audit by P8, not as a slogan.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://github.com/karpathy/micrograd" target="_blank" rel="noopener">karpathy/micrograd</a> — Andrej Karpathy (2020) · The finished library the lecture reconstructs. Read the README example first; it is the exact expression he demos at 00:25, with <span class="mono">g.data = 24.7041</span>, <span class="mono">a.grad = 138.8338</span>, <span class="mono">b.grad = 645.5773</span> printed in the source.</li>
+    <li><a href="https://github.com/karpathy/nn-zero-to-hero/tree/master/lectures/micrograd" target="_blank" rel="noopener">nn-zero-to-hero / lectures / micrograd</a> — Andrej Karpathy (2022) · The two notebooks he actually types in, saved cell by cell. <span class="mono">micrograd_lecture_first_half_roughly.ipynb</span> holds every cell in this part; open it beside the video rather than pausing to transcribe.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L5" target="_blank" rel="noopener">engine.py, <span class="mono">Value.__init__</span> (line 5)</a> — Andrej Karpathy (2020) · Where the wrapper object you have not met yet begins: <span class="mono">data</span>, <span class="mono">grad</span>, <span class="mono">_backward</span>, <span class="mono">_prev</span>, <span class="mono">_op</span>. Five attributes, 94 lines in the file. Skim it now to see the size of the destination.</li>
+    <li><a href="https://colab.research.google.com/drive/1FPTx1RXtBfc4MaTkf7viZZD4U2F9gtKN?usp=sharing" target="_blank" rel="noopener">The official exercise Colab</a> — Andrej Karpathy (2022) · Its opening section belongs to this part: write the analytic gradient of a three-input function by hand, then estimate the same gradient numerically and compare. Do it before P2, not after the whole lecture.</li>
+    <li><a href="https://cs231n.github.io/optimization-2/" target="_blank" rel="noopener">CS231n: Backpropagation, Intuitions</a> — Andrej Karpathy / Stanford CS231n · <em>Field map extra.</em> The written version of the same argument, with the "gates" framing and the local-gradient-times-upstream-gradient picture that P3 arrives at. Its section on numerical gradient checking covers the <span class="mono">h</span>-too-small failure in more detail than the video does.</li>
+    <li><a href="https://docs.pytorch.org/docs/stable/generated/torch.autograd.gradcheck.gradcheck.html" target="_blank" rel="noopener">torch.autograd.gradcheck</a> — PyTorch docs · <em>Field map extra.</em> Production code that does exactly the bump-and-divide from these cells (central differences, tolerances) to verify analytic gradients. Proof that the "hacky" method in this part is the standard correctness test, not a teaching-only device.</li>
+    <li><a href="https://www.nature.com/articles/323533a0" target="_blank" rel="noopener">Learning representations by back-propagating errors</a> — Rumelhart, Hinton &amp; Williams (1986) · <em>Field map extra.</em> The canonical backprop paper. Two pages, and the algorithm being automated in P4 is recognisably the one described here; useful for seeing how little the idea has changed.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Sweep h until it breaks.</b><span class="code">code</span> — Write <span class="mono">slope(x, h) = (f(x+h) - f(x))/h</span> for <span class="mono">f(x) = 3x² − 4x + 5</span>, and evaluate it at <span class="mono">x = 3</span> for <span class="mono">h</span> in <span class="mono">[1e-1, 1e-2, … 1e-16]</span>. Print the absolute error against the exact answer, 14. A good answer: the error falls linearly with <span class="mono">h</span> down to about <span class="mono">1e-8</span>, then <em>rises</em>, and is catastrophic by <span class="mono">1e-15</span>. Then add a central-difference version and sweep it too — its error should fall faster (quadratically) and bottom out lower. Say in one sentence why the two curves have a U-shape at all.</li>
+    <li><b>Gradient by hand for three inputs.</b><span class="code">code</span> — Take <span class="mono">d(a, b, c) = a*b + c</span> at <span class="mono">a = 2, b = −3, c = 10</span>. (1) Write the three partial derivatives symbolically. (2) Write a loop that bumps each input in turn by <span class="mono">h = 1e-6</span> and prints the numerical estimate, so you get a three-element gradient vector. (3) Check that they agree to five decimals. (4) Now change <span class="mono">b</span> to <span class="mono">100</span> and rerun without touching your symbolic answers — predict which entries move before you look. This is the exercise Colab's opening section in miniature; <a class="lnk" href="https://colab.research.google.com/drive/1FPTx1RXtBfc4MaTkf7viZZD4U2F9gtKN?usp=sharing">do that section</a> for the real version, which uses a nastier function.</li>
+    <li><b>Predict the sign, then run.</b> — Before touching a keyboard, write down the sign of <span class="mono">∂g/∂a</span> and <span class="mono">∂g/∂b</span> for the README expression at <span class="mono">a = −4, b = 2</span>, and which of the two you expect to have the larger magnitude. Then <span class="mono">pip install micrograd</span>, run the README snippet, and compare with 138.8338 and 645.5773. A good answer explains <em>which</em> operations in the chain amplify <span class="mono">b</span>'s influence — the <span class="mono">b**3</span> term and the squaring of <span class="mono">e</span> are the places to look — rather than just noting that you were right or wrong.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p02.html">P02 The Value object and the expression graph</a> · Back to the <a class="lnk" href="../index.html#derivatives">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "building micrograd" (2022), part 01. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

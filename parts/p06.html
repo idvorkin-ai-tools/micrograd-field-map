@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P06 An MLP in micrograd — micrograd, mapped</title>
+<meta name="description" content="Neuron, Layer and MLP built on Value; four training examples; a mean-squared-error loss that is itself a Value; and parameters() collecting all 41 weights." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>MICROGRAD&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#nets">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box bb mono">PART 06 · A NEURAL NET, TRAINED BY HAND</span><span class="mono">103:55–121:12 · 17 min</span></div>
+  <h1>An MLP in micrograd: Neuron, Layer, MLP, a tiny dataset, the loss, the parameters</h1>
+  <div class="authors">Andrej Karpathy · building micrograd (2022) · part 06 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Video</span><a href="https://youtu.be/VMj-3S1tku0?t=6235" target="_blank" rel="noopener">Start this part at 103:55 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Code</span><a href="https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/micrograd/micrograd_lecture_second_half_roughly.ipynb" target="_blank" rel="noopener">micrograd_lecture_second_half_roughly.ipynb · the Neuron / Layer / MLP cells, the dataset, the loss ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-6235">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> Everything hard is already done; this part is bookkeeping. A neuron is a dot product of weights with inputs, plus a bias, through <code class="mono">tanh</code> — three lines of <code class="mono">Value</code> arithmetic. A layer is a list of neurons; an MLP is a list of layers called in sequence. Four hand-written examples and a sum of squared errors turn the network's four predictions into <em>one</em> <code class="mono">Value</code>, and calling <code class="mono">backward()</code> on that one number pushes a gradient into all 41 weights and biases at once. The thing to remember: the loss is not a float that got computed, it is a node at the top of a graph containing four full forward passes, and that is the only reason the weights learn anything.</div>
+
+  <p class="lead">By 103:55 the engine is finished and verified against PyTorch. What is missing is a reason to care: so far every graph has been an expression somebody typed by hand. This stretch of the video builds the smallest thing that deserves the name "neural network" — a two-hidden-layer perceptron — entirely out of <code class="mono">Value</code>, and then does the one move that makes training possible: collapsing the network's several outputs into a single scalar so that <code class="mono">backward()</code> has somewhere to start. Nothing here is new mathematics. It is the moment the machinery gets pointed at a target.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=6235" target="_blank" rel="noopener">103:55</a> — Neural nets are a class of expression: the plan is a two-layer MLP, built to mirror PyTorch's module API.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=6268" target="_blank" rel="noopener">104:28</a> — <code class="mono">class Neuron</code>: <code class="mono">nin</code> random weights and a bias, both uniform in [−1, 1].</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=6328" target="_blank" rel="noopener">105:28</a> — <code class="mono">__call__</code> so that <code class="mono">n(x)</code> works; a stub returning 0.0 first, then the real forward pass with <code class="mono">zip</code>.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=6422" target="_blank" rel="noopener">107:02</a> — <code class="mono">act.tanh()</code>, and the tidy version: <code class="mono">sum(...)</code> started at <code class="mono">self.b</code> instead of at 0.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=6454" target="_blank" rel="noopener">107:34</a> — <code class="mono">class Layer</code>: independent neurons, all fed the same input, evaluated in a list comprehension.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=6546" target="_blank" rel="noopener">109:06</a> — <code class="mono">class MLP</code>: <code class="mono">sz = [nin] + nouts</code>, consecutive pairs become layers, and the call chains them.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=6606" target="_blank" rel="noopener">110:06</a> — Unwrapping a one-element output list, then <code class="mono">draw_dot(n(x))</code> on the whole network.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=6664" target="_blank" rel="noopener">111:04</a> — Four inputs, four desired targets: a binary classifier's worth of data, typed by hand.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=6758" target="_blank" rel="noopener">112:38</a> — Mean squared error: pair predictions with targets, subtract, square, sum. Loss ≈ 7.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=6879" target="_blank" rel="noopener">114:39</a> — <code class="mono">loss.backward()</code>, and the first weight deep inside the net that now has a gradient.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=6970" target="_blank" rel="noopener">116:10</a> — <code class="mono">draw_dot(loss)</code>: four forward passes in one picture, ending at 7.12.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=7076" target="_blank" rel="noopener">117:56</a> — <code class="mono">parameters()</code> on all three classes, and the count: 41.</li>
+  </ul>
+
+  <h2>A neuron is four lines of Value arithmetic</h2>
+  <p>The design constraint Karpathy sets himself at <a href="https://youtu.be/VMj-3S1tku0?t=6235" target="_blank" rel="noopener">103:55</a> is the same one that shaped the engine: mirror PyTorch. The engine already matched <code class="mono">torch.Tensor</code> on the autograd side — <code class="mono">.data</code>, <code class="mono">.grad</code>, <code class="mono">.backward()</code>. Now the network classes will match <code class="mono">torch.nn.Module</code>: a constructor that allocates parameters, a call that runs a forward pass, and a <code class="mono">parameters()</code> method that hands you everything trainable. That API choice is the reason this code reads as familiar to anyone who has written PyTorch, and it is worth noticing that it is a choice, not a consequence.</p>
+
+  <p>A neuron takes <code class="mono">nin</code> inputs. Its constructor allocates one weight per input plus a single bias, all drawn uniformly from −1 to 1. Every one of those is a <code class="mono">Value</code>, which means every one of them is a leaf that a gradient can eventually be deposited on. The weights say how much each input matters; the bias is a free offset that shifts the neuron's activation before the squashing function — Karpathy calls it the neuron's</p>
+
+  <blockquote class="q">a bias that controls the overall trigger happiness of this neuron<span class="cite"><a href="https://youtu.be/VMj-3S1tku0?t=6298" target="_blank" rel="noopener">104:58</a></span></blockquote>
+
+  <p>The forward pass is <code class="mono">w · x + b</code> put through <code class="mono">tanh</code>. He builds it in two moves. First <code class="mono">__call__</code> is stubbed to <code class="mono">return 0.0</code> just to demonstrate that defining <code class="mono">__call__</code> is what makes the expression <code class="mono">n(x)</code> legal Python at <a href="https://youtu.be/VMj-3S1tku0?t=6328" target="_blank" rel="noopener">105:28</a> — the object becomes callable, which is the whole trick behind PyTorch's <code class="mono">model(x)</code> too. Then the body gets filled in: <code class="mono">zip(self.w, x)</code> pairs each weight with its input, a generator multiplies each pair, and <code class="mono">sum</code> adds them up.</p>
+
+  <pre class="code-block"><code>class Neuron:
+
+  def __init__(self, nin):
+    self.w = [Value(random.uniform(-1,1)) for _ in range(nin)]
+    self.b = Value(random.uniform(-1,1))
+
+  def __call__(self, x):
+    # w * x + b
+    act = sum((wi*xi for wi, xi in zip(self.w, x)), self.b)
+    out = act.tanh()
+    return out</code></pre>
+
+  <p>The detail that trips people up is the second argument to <code class="mono">sum</code>. Python's <code class="mono">sum</code> takes a <em>start</em> value, defaulting to the integer <code class="mono">0</code>, and the bias is exactly the thing you want the products to accumulate onto — so passing <code class="mono">self.b</code> as the start folds the <code class="mono">+ b</code> into the same call and saves a line (<a href="https://youtu.be/VMj-3S1tku0?t=6454" target="_blank" rel="noopener">107:34</a>). Two consequences follow. One is syntactic: because <code class="mono">sum</code> now has two arguments, the generator expression must be wrapped in its own parentheses. The other is a quiet vindication of the previous part — if you <em>had</em> left the start at <code class="mono">0</code>, the very first addition would be <code class="mono">int + Value</code>, which only works because <code class="mono">__radd__</code> was added while breaking up <code class="mono">tanh</code>. The dunder chores from P05 are load-bearing here; they are the reason ordinary Python idioms compose with <code class="mono">Value</code> at all.</p>
+
+  <p>Each call also produces a <em>fresh</em> graph. The weights are persistent objects, but <code class="mono">wi*xi</code>, the running sums, the pre-activation and the <code class="mono">tanh</code> output are all new <code class="mono">Value</code> nodes allocated on every forward pass, each holding references to its children. Nothing is cached, nothing is reused, and the graph is rebuilt from scratch every time you call the network — which is exactly the define-by-run model PyTorch uses, and exactly why the memory cost of a forward pass is proportional to the number of operations, not the number of parameters.</p>
+
+  <h2>Layer and MLP: containers, nothing more</h2>
+  <p>A layer is a set of neurons that all see the same input and never talk to each other (<a href="https://youtu.be/VMj-3S1tku0?t=6485" target="_blank" rel="noopener">108:05</a>). That is the entire content of the class: hold a list of <code class="mono">Neuron(nin)</code>, and on call, evaluate each of them on <code class="mono">x</code> and return the list of outputs. "Fully connected" is not implemented anywhere — it is simply what you get when every neuron in the list is constructed with <code class="mono">nin</code> weights and handed the whole input vector.</p>
+
+  <p>An MLP is the same trick one level up. You give it the input width and a list of layer widths; it forms <code class="mono">sz = [nin] + nouts</code> and creates a <code class="mono">Layer(sz[i], sz[i+1])</code> for each consecutive pair, so the widths chain automatically. The forward pass is a loop that reassigns <code class="mono">x</code> to each layer's output in turn (<a href="https://youtu.be/VMj-3S1tku0?t=6546" target="_blank" rel="noopener">109:06</a>). <code class="mono">MLP(3, [4, 4, 1])</code> is therefore three inputs, two hidden layers of four, one output — the picture he has been drawing on the whiteboard all lecture.</p>
+
+  <p>One piece of ergonomics matters more than it looks. <code class="mono">Layer.__call__</code> always returns a list, so a network ending in a single neuron would return a one-element list instead of a number. At <a href="https://youtu.be/VMj-3S1tku0?t=6606" target="_blank" rel="noopener">110:06</a> he adds <code class="mono">return outs[0] if len(outs) == 1 else outs</code>, and this is not cosmetic: the loss written a minute later does <code class="mono">yout - ygt</code>, which needs <code class="mono">yout</code> to be a <code class="mono">Value</code>, not a list containing one. Small unwrap, large downstream consequence.</p>
+
+  <p>Then <code class="mono">draw_dot(n(x))</code> on the whole network, which produces a graph too wide to read. This is deliberate — it is the visual argument that you would never do this by hand, followed immediately by the claim that the machinery does not care how big it gets.</p>
+
+  <h2>Four examples, one number</h2>
+  <p>The dataset at <a href="https://youtu.be/VMj-3S1tku0?t=6664" target="_blank" rel="noopener">111:04</a> is four three-dimensional inputs and four targets, <code class="mono">[1.0, -1.0, -1.0, 1.0]</code>, typed as literals. It is a binary classification problem with four training points and forty-one parameters — hopelessly over-parameterised, which is the point: it will fit perfectly and quickly, and nothing about generalisation is being taught here.</p>
+
+  <p>Run the untrained network on all four and the predictions are all positive and all clustered high — around 0.91, 0.88, 0.8, 0.8 in his run (<a href="https://youtu.be/VMj-3S1tku0?t=6696" target="_blank" rel="noopener">111:36</a>). Exact digits depend on the random initialisation, so yours will differ; what will not differ is that two of the four have the wrong <em>sign</em> entirely. The network has no idea what it is doing yet.</p>
+
+  <table class="kv">
+    <tr><th>Input</th><th>Target</th><th>Untrained prediction</th><th>Signed error</th></tr>
+    <tr><td>[2.0, 3.0, −1.0]</td><td>+1.0</td><td>≈ 0.91</td><td>small, right sign</td></tr>
+    <tr><td>[3.0, −1.0, 0.5]</td><td>−1.0</td><td>≈ 0.88</td><td>large, wrong sign</td></tr>
+    <tr><td>[0.5, 1.0, 1.0]</td><td>−1.0</td><td>≈ 0.8</td><td>large, wrong sign</td></tr>
+    <tr><td>[1.0, 1.0, −1.0]</td><td>+1.0</td><td>≈ 0.8</td><td>small, right sign</td></tr>
+  </table>
+
+  <p>Now the move the whole lecture has been building toward. You cannot backpropagate from four numbers; <code class="mono">backward()</code> seeds a single output with <code class="mono">grad = 1.0</code> and needs exactly one root. So you define a single number that measures how badly the network is doing overall — the <em>loss</em> — and differentiate that. Mean squared error is the choice here: pair each prediction with its target, subtract, square, and sum the four.</p>
+
+  <pre class="code-block"><code>xs = [
+  [2.0, 3.0, -1.0],
+  [3.0, -1.0, 0.5],
+  [0.5, 1.0, 1.0],
+  [1.0, 1.0, -1.0],
+]
+ys = [1.0, -1.0, -1.0, 1.0] # desired targets
+
+ypred = [n(x) for x in xs]
+loss = sum((yout - ygt)**2 for ygt, yout in zip(ys, ypred))</code></pre>
+
+  <p>Three things about that one line. The squaring is there to discard the sign — he says explicitly at <a href="https://youtu.be/VMj-3S1tku0?t=6818" target="_blank" rel="noopener">113:38</a> that absolute value would serve the same purpose, and he is right that for <em>this</em> purpose it would; he does not get into why squaring is preferred in practice (it is differentiable everywhere and penalises large errors quadratically). The loss is zero exactly when every prediction equals its target and grows as you get further away, which is the only property being asked of it. And <code class="mono">**2</code> and <code class="mono">-</code> on <code class="mono">Value</code> objects exist only because of the operator work in P05 — <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L35-L43" target="_blank" rel="noopener"><code class="mono">__pow__</code></a> and <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L78-L79" target="_blank" rel="noopener"><code class="mono">__sub__</code></a>. Without them this line raises a <code class="mono">TypeError</code> and the lecture stops.</p>
+
+  <p>Because the term for the well-fit first example is near zero and the badly-fit ones are near 4 each, the total lands around 7 — he reads off 7.12 at <a href="https://youtu.be/VMj-3S1tku0?t=7001" target="_blank" rel="noopener">116:41</a>. And critically, <code class="mono">loss</code> is not a Python float. It is a <code class="mono">Value</code> sitting at the top of a graph that contains four complete forward passes of a 41-parameter network, wired together by the subtraction, squaring and summation. Four separate runs of the same network, sharing the same weight objects, joined into one expression.</p>
+
+  <div class="callout">The single most important idea in this part: <b>the loss is a node, not a number.</b> Every operation you performed to get from the weights to the four predictions to the total error is still sitting there as graph structure, and the shared weight objects mean each weight appears in all four forward passes. That is why a single <code class="mono">loss.backward()</code> can tell you how <em>every</em> parameter affects <em>overall</em> performance across the <em>whole</em> dataset — and why the <code class="mono">+=</code> accumulation from P04 is not an optimisation but a correctness requirement.</div>
+
+  <h2>backward() reaches the weights</h2>
+  <p>Then he calls <code class="mono">loss.backward()</code>, notes that something magical just happened, and proves it by reaching into the network: <code class="mono">n.layers[0].neurons[0].w[0]</code> — the first weight of the first neuron of the first layer, as deep in the structure as it is possible to be from the loss — now has a nonzero <code class="mono">.grad</code> (<a href="https://youtu.be/VMj-3S1tku0?t=6909" target="_blank" rel="noopener">115:09</a>). In his run it is negative, which reads directly: nudging that particular weight up would push the total loss down. There is one such number per parameter, and each is an instruction about which direction to move.</p>
+
+  <p>The gradient reached that weight by the same rule as everywhere else in the lecture — local derivative times upstream gradient, accumulated with <code class="mono">+=</code>, applied node by node in reverse topological order (<a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L54-L70" target="_blank" rel="noopener"><code class="mono">backward</code>, engine.py L54</a>). The only difference from P03's hand-worked neuron is scale. Concretely, that first weight receives four contributions, one from each example's forward pass, and they sum: the reported gradient is the derivative of the <em>total</em> loss, not of any single example's error.</p>
+
+  <p>Drawing <code class="mono">draw_dot(loss)</code> at <a href="https://youtu.be/VMj-3S1tku0?t=6970" target="_blank" rel="noopener">116:10</a> shows the whole thing, and he calls it excessive — which it is, and which is the honest lesson: nothing about this graph is efficient. It is four forward passes of scalar arithmetic with a Python object per intermediate. A real framework batches this into tensor operations. The graph is here for comprehension, not throughput.</p>
+
+  <p>He also notices something worth pausing on at <a href="https://youtu.be/VMj-3S1tku0?t=7032" target="_blank" rel="noopener">117:12</a>: the <em>input data</em> has gradients too. The 2.0 and 3.0 in the first example each got a derivative, because they are leaves of the graph exactly like the weights are. Those gradients are perfectly real and completely useless for training — the data is given, not adjustable. They are not useless in general, though; the same numbers are what adversarial-example generation and input-optimisation methods use. Here, they are just noise the engine happened to compute. It is a good reminder that the engine has no concept of "parameter": every leaf gets a gradient, and it is the training loop that decides which ones to act on.</p>
+
+  <h2>parameters(): forty-one numbers in one list</h2>
+  <p>To update the weights you first need to enumerate them, and they are buried three containers deep. Hence <code class="mono">parameters()</code> on each class, named after PyTorch's method of the same name (<a href="https://youtu.be/VMj-3S1tku0?t=7076" target="_blank" rel="noopener">117:56</a>). A neuron returns its weights plus its bias. A layer returns the concatenation of its neurons' parameters. An MLP returns the concatenation of its layers'. He writes the layer version first as an explicit loop with <code class="mono">params.extend(...)</code>, then compresses it to a nested list comprehension at <a href="https://youtu.be/VMj-3S1tku0?t=7154" target="_blank" rel="noopener">119:14</a> — read the two <code class="mono">for</code> clauses left to right, outer loop first, exactly as if they were nested statements.</p>
+
+  <p>Then a very ordinary Jupyter trap, which he hits live at <a href="https://youtu.be/VMj-3S1tku0?t=7245" target="_blank" rel="noopener">120:45</a>: the network object <code class="mono">n</code> was constructed from the <em>old</em> class definitions, so it has no <code class="mono">parameters</code> method no matter how many times you re-run the cell that defines the classes. You have to re-instantiate the MLP, which re-randomises every weight and changes all the numbers he has been showing. Worth internalising if you are following along in a notebook.</p>
+
+  <p><code class="mono">len(n.parameters())</code> comes out to 41. The arithmetic:</p>
+
+  <table class="kv">
+    <tr><th>Layer</th><th>Shape</th><th>Neurons</th><th>Params each (w + b)</th><th>Total</th></tr>
+    <tr><td>1 (hidden)</td><td>3 → 4</td><td>4</td><td>3 + 1 = 4</td><td>16</td></tr>
+    <tr><td>2 (hidden)</td><td>4 → 4</td><td>4</td><td>4 + 1 = 5</td><td>20</td></tr>
+    <tr><td>3 (output)</td><td>4 → 1</td><td>1</td><td>4 + 1 = 5</td><td>5</td></tr>
+    <tr><td><b>MLP(3, [4, 4, 1])</b></td><td>3 → 1</td><td>9</td><td>—</td><td><b>41</b></td></tr>
+  </table>
+
+  <p>Forty-one <code class="mono">Value</code> objects, each with a <code class="mono">.data</code> you can change and a <code class="mono">.grad</code> telling you which way to change it. That is a complete, trainable neural network, and the part ends one line short of actually training it.</p>
+
+  <h2 id="code">The code at the end of this part</h2>
+  <pre class="code-block"><code>class Neuron:
+
+  def __init__(self, nin):
+    self.w = [Value(random.uniform(-1,1)) for _ in range(nin)]
+    self.b = Value(random.uniform(-1,1))
+
+  def __call__(self, x):
+    # w * x + b
+    act = sum((wi*xi for wi, xi in zip(self.w, x)), self.b)
+    out = act.tanh()
+    return out
+
+  def parameters(self):
+    return self.w + [self.b]
+
+class Layer:
+
+  def __init__(self, nin, nout):
+    self.neurons = [Neuron(nin) for _ in range(nout)]
+
+  def __call__(self, x):
+    outs = [n(x) for n in self.neurons]
+    return outs[0] if len(outs) == 1 else outs
+
+  def parameters(self):
+    return [p for neuron in self.neurons for p in neuron.parameters()]
+
+class MLP:
+
+  def __init__(self, nin, nouts):
+    sz = [nin] + nouts
+    self.layers = [Layer(sz[i], sz[i+1]) for i in range(len(nouts))]
+
+  def __call__(self, x):
+    for layer in self.layers:
+      x = layer(x)
+    return x
+
+  def parameters(self):
+    return [p for layer in self.layers for p in layer.parameters()]
+
+x = [2.0, 3.0, -1.0]
+n = MLP(3, [4, 4, 1])
+n(x)
+
+xs = [
+  [2.0, 3.0, -1.0],
+  [3.0, -1.0, 0.5],
+  [0.5, 1.0, 1.0],
+  [1.0, 1.0, -1.0],
+]
+ys = [1.0, -1.0, -1.0, 1.0] # desired targets
+
+ypred = [n(x) for x in xs]
+loss = sum((yout - ygt)**2 for ygt, yout in zip(ys, ypred))
+loss.backward()
+
+len(n.parameters())   # 41</code></pre>
+
+  <p>Line by line, against the finished library:</p>
+  <ul class="readings">
+    <li><code class="mono">self.w = [...]; self.b = Value(...)</code> — the same allocation as <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L16-L17" target="_blank" rel="noopener">nn.py L16–L17</a>, with one change in the released version: the bias there is initialised to <code class="mono">Value(0)</code> rather than a random number. A zero bias is the standard modern default — the symmetry that random initialisation is there to break lives in the weights, so randomising the bias buys nothing.</li>
+    <li><code class="mono">act = sum((wi*xi ...), self.b)</code> — identical to <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L21" target="_blank" rel="noopener">nn.py L21</a>. Every <code class="mono">wi*xi</code> is a new graph node whose <code class="mono">_backward</code> routes <code class="mono">out.grad</code> to <code class="mono">wi</code> scaled by <code class="mono">xi.data</code> and vice versa: for a product, the local derivative with respect to one factor is the other factor. Each <code class="mono">+</code> in the sum routes its gradient to both children unchanged, because the derivative of <code class="mono">a + b</code> with respect to either input is 1 — addition is a gradient distributor.</li>
+    <li><code class="mono">out = act.tanh()</code> — the lecture keeps <code class="mono">tanh</code> as a single node with local derivative <code class="mono">1 - t**2</code>. <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L20-L22" target="_blank" rel="noopener">nn.py L20–L22</a> uses <code class="mono">relu()</code> instead and adds a <code class="mono">nonlin</code> flag so the output layer can be linear. P05 already showed why either is fine: the node boundary is a choice about where you are willing to write a derivative by hand, not a mathematical constraint.</li>
+    <li><code class="mono">return self.w + [self.b]</code> — <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L24-L25" target="_blank" rel="noopener">nn.py L24–L25</a>, unchanged. Note it returns the <em>objects</em>, not copies: mutating <code class="mono">p.data</code> through this list mutates the network. That aliasing is what makes the next part's update loop work.</li>
+    <li><code class="mono">outs[0] if len(outs) == 1 else outs</code> — <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L35-L37" target="_blank" rel="noopener">nn.py L35–L37</a>, unchanged. Convenience, but load-bearing for the loss expression.</li>
+    <li><code class="mono">sz = [nin] + nouts</code> — <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L47-L49" target="_blank" rel="noopener">nn.py L47–L49</a>. The library adds <code class="mono">nonlin=i!=len(nouts)-1</code> to that same comprehension, which is the only structural difference between the lecture's MLP and the shipped one.</li>
+    <li><code class="mono">loss = sum((yout - ygt)**2 ...)</code> — the outer <code class="mono">sum</code> starts at the integer 0, so its first addition is <code class="mono">0 + Value</code> and goes through <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L75-L76" target="_blank" rel="noopener"><code class="mono">__radd__</code></a>. <code class="mono">yout - ygt</code> goes through <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L78-L79" target="_blank" rel="noopener"><code class="mono">__sub__</code></a>, which is implemented as <code class="mono">self + (-other)</code> and therefore as a multiply by −1 plus an add — no new backward function needed.</li>
+    <li>What is <em>not</em> here yet: a <code class="mono">zero_grad</code>. The library has one on the <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py#L4-L11" target="_blank" rel="noopener"><code class="mono">Module</code> base class (nn.py L4–L11)</a>. The lecture does not, and the resulting bug is the centrepiece of P07.</li>
+  </ul>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"Why does <code class="mono">sum</code> take a second argument, and why the extra parentheses?"</b> — The second argument is Python's <code class="mono">start</code> value for the accumulation, and using <code class="mono">self.b</code> for it means the running total begins at the bias instead of at 0, folding <code class="mono">+ b</code> into the same expression. Once <code class="mono">sum</code> has two arguments, the generator can no longer be bare; it needs its own parentheses or Python cannot tell where the first argument ends. Leaving the start at 0 also works, but only because <code class="mono">Value.__radd__</code> exists to handle <code class="mono">int + Value</code>.</li>
+    <li><b>"My loss line raises a TypeError."</b> — Almost always one of two things. Either your <code class="mono">Value</code> class is missing <code class="mono">__pow__</code>, <code class="mono">__sub__</code>, <code class="mono">__neg__</code> or <code class="mono">__radd__</code> (they are added in P05, and the loss uses all four), or your network is returning a one-element <em>list</em> because you skipped the <code class="mono">outs[0] if len(outs) == 1</code> unwrap, and you are trying to subtract a float from a list.</li>
+    <li><b>"Why does the deepest weight get a gradient at all — the loss doesn't mention it?"</b> — Because the loss is not a number that was computed and discarded; it is the root of a graph that still holds references, through <code class="mono">_prev</code>, all the way down to that weight. <code class="mono">backward()</code> topologically sorts that graph and walks it in reverse, so every node between the loss and the weight passes its gradient down by the chain rule. The distance is irrelevant; only connectivity matters. And because the same weight object participates in all four forward passes, its four contributions accumulate with <code class="mono">+=</code> — remove the <code class="mono">+=</code> from P04 and this network silently trains on one example instead of four.</li>
+    <li><b>"I added <code class="mono">parameters()</code> and got AttributeError."</b> — Re-running a cell that defines a class does not retrofit the method onto objects already built from the previous definition. You must construct a fresh <code class="mono">MLP</code>, which re-randomises all 41 parameters and changes every number on screen. Karpathy hits this live; it is not you.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/nn.py" target="_blank" rel="noopener">micrograd/nn.py</a> — Andrej Karpathy (2020) · The whole neural-net library, 60 lines: <code class="mono">Module</code> (L4), <code class="mono">Neuron</code> (L13), <code class="mono">Layer</code> (L30), <code class="mono">MLP</code> (L45). Compare against the cells above to see exactly what the polished version adds — <code class="mono">zero_grad</code>, ReLU, a linear output layer, <code class="mono">__repr__</code>.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py" target="_blank" rel="noopener">micrograd/engine.py</a> — Andrej Karpathy (2020) · The operators this part leans on: <code class="mono">__pow__</code> at L35, <code class="mono">__sub__</code> at L78, <code class="mono">__radd__</code> at L75, and <code class="mono">backward</code> at L54.</li>
+    <li><a href="https://pytorch.org/docs/stable/generated/torch.nn.Module.html" target="_blank" rel="noopener">torch.nn.Module</a> — PyTorch docs · The API being imitated. Read <code class="mono">parameters()</code>, <code class="mono">zero_grad()</code> and <code class="mono">__call__</code>/<code class="mono">forward</code> and the resemblance is exact; the difference is that PyTorch discovers parameters by attribute registration rather than by a hand-written list comprehension.</li>
+    <li><a href="https://pytorch.org/docs/stable/generated/torch.nn.Linear.html" target="_blank" rel="noopener">torch.nn.Linear</a> — PyTorch docs · <b>Field map extra.</b> What a whole <code class="mono">Layer</code> becomes when you batch it: one matrix multiply plus a bias vector, instead of <code class="mono">nout</code> Python objects each running a scalar loop. Worth reading now to see precisely which line of our <code class="mono">Layer</code> the GPU version replaces.</li>
+    <li><a href="https://pytorch.org/docs/stable/generated/torch.nn.MSELoss.html" target="_blank" rel="noopener">torch.nn.MSELoss</a> — PyTorch docs · <b>Field map extra.</b> The same loss with a <code class="mono">reduction</code> argument. Note the default is <code class="mono">'mean'</code>, not <code class="mono">'sum'</code> as in the lecture — which effectively divides every gradient by the number of examples and so changes what learning rate you need.</li>
+    <li><a href="https://cs231n.github.io/neural-networks-1/" target="_blank" rel="noopener">CS231n: Neural Networks Part 1</a> — Karpathy, Johnson, Li (Stanford, 2016) · <b>Field map extra.</b> The same neuron-and-layer construction written out with the biological analogy, activation-function comparison, and a parameter count for real architectures. The direct ancestor of this lecture's framing.</li>
+    <li><a href="https://www.nature.com/articles/323533a0" target="_blank" rel="noopener">Learning representations by back-propagating errors</a> — Rumelhart, Hinton &amp; Williams (1986) · <b>Field map extra.</b> The original paper, and its loss is exactly the sum of squared differences between output and target that you just typed. Reading section 1 after this part is a short, satisfying trip.</li>
+    <li><a href="https://playground.tensorflow.org/" target="_blank" rel="noopener">TensorFlow Playground</a> — Smilkov &amp; Carter (Google, 2016) · <b>Field map extra.</b> Build the same shape of network in a browser and watch the decision boundary move. Useful for intuition about what four points and 41 parameters actually get you.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Predict the parameter count, then check it</b> <span class="code">code</span> — Without running anything, work out <code class="mono">len(MLP(2, [16, 16, 1]).parameters())</code>. Then write a one-line formula for <code class="mono">MLP(nin, nouts)</code> in general, implement it as a function, and assert it against <code class="mono">len(n.parameters())</code> for at least four different shapes including a single-layer net. A good answer names the two things the formula must handle: the bias adds one per neuron, and each layer's input width is the previous layer's output width. Then say how many parameters <code class="mono">MLP(3, [4, 4, 1])</code> would have if the biases were dropped, and whether the network could still fit the four-point dataset.</li>
+    <li><b>Break the unwrap, then break the accumulation</b> <span class="code">code</span> — (a) Delete the <code class="mono">outs[0] if len(outs) == 1 else outs</code> line from <code class="mono">Layer.__call__</code> and re-run the loss cell; read the error and explain in one sentence which object the interpreter was actually complaining about. Restore it. (b) Now change <code class="mono">self.grad +=</code> to <code class="mono">self.grad =</code> in <code class="mono">__mul__</code> and <code class="mono">__add__</code> only, rebuild the network, and compare <code class="mono">n.layers[0].neurons[0].w[0].grad</code> before and after. A good answer explains why the broken version returns a gradient that is close to correct for a single example but wrong for the four-example loss, and connects it to the <code class="mono">b = a + a</code> bug from P04.</li>
+    <li><b>Change the loss and predict the consequence</b> <span class="code">code</span> — Replace the sum-of-squares with (i) the mean of squares and (ii) a sum of absolute differences (you will need <code class="mono">abs</code> — implement it as a <code class="mono">Value</code> method with the right <code class="mono">_backward</code>, or express it with the operations you already have). For each, call <code class="mono">backward()</code> on a freshly initialised network and record <code class="mono">w[0].grad</code> of the first neuron. A good answer states the ratio between the mean and sum gradients before running it and gets it right, and says what happens to the absolute-value derivative when a prediction exactly hits its target. Note that the <a href="https://colab.research.google.com/drive/1FPTx1RXtBfc4MaTkf7viZZD4U2F9gtKN?usp=sharing" target="_blank" rel="noopener">official exercise Colab</a> does this properly in its second section, building a softmax and negative-log-likelihood loss instead — its sections belong to P1, P5 and P7 rather than here, but this part is the setup that makes section 2 make sense.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p07.html">P07 Training by hand: gradient descent, the learning rate, the zero-grad mistake</a> · Back to the <a class="lnk" href="../index.html#nets">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "building micrograd" (2022), part 06. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

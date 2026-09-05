@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P03 Backpropagation by hand: an expression, then a neuron — micrograd, mapped</title>
+<meta name="description" content="Filling in grad backwards through a small graph and then a tanh neuron: local derivative times upstream gradient, checked numerically at every node." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>MICROGRAD&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#backprop">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box wb mono">PART 03 · BACKPROP</span><span class="mono">32:10–69:02 · 37 min</span></div>
+  <h1>Backpropagation by hand: an expression, then a neuron</h1>
+  <div class="authors">Andrej Karpathy · building micrograd (2022) · part 03 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Video</span><a href="https://youtu.be/VMj-3S1tku0?t=1930" target="_blank" rel="noopener">Start this part at 32:10 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Code</span><a href="https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/micrograd/micrograd_lecture_first_half_roughly.ipynb" target="_blank" rel="noopener">micrograd_lecture_first_half_roughly.ipynb · the <span class="mono">lol()</span> gradient check, the nudge cell, the neuron, the by-hand grads ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-1930">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> The graph from P2 can be evaluated forwards; this part evaluates it <em>backwards</em>, by hand, one node at a time. The whole procedure is a single rule applied repeatedly: the gradient arriving at a node, times the node's own local derivative, is the gradient going to each of its inputs. On the toy expression <span class="mono">L = (a·b + c)·f</span> that gives <span class="mono">a.grad = 6</span>, <span class="mono">b.grad = −4</span>, <span class="mono">c.grad = −2</span>, <span class="mono">f.grad = 4</span>, every one of them confirmed by bumping the input and re-running the forward pass. Nudging all four inputs along their gradients by 0.01 moves <span class="mono">L</span> from −8.0 to −7.286496 — one step of training, done with nothing but arithmetic. The same procedure then runs through a two-input <span class="mono">tanh</span> neuron, where the bias is chosen so the answers land on 0.5 and 1.0 and you can check them in your head. Remember the rule, not the numbers: <b>local derivative × upstream gradient</b>, applied recursively from the output backwards.</div>
+
+  <p class="lead">By 32:10 the lecture has everything it needs and nothing it wants. P1 established what a derivative is — bump the input by <span class="mono">h</span>, see how much the output moves, divide. P2 built a <span class="mono">Value</span> that remembers its children and the operation that produced it, so any expression is now a graph you can draw. What is missing is the connection: a derivative is defined at the <em>leaves</em> of that graph, but the graph is <em>built</em> from the leaves toward the output. Backpropagation is the algorithm that closes that gap, and Karpathy's choice here is to run it manually — no code, no automation, just typing numbers into <span class="mono">.grad</span> fields and redrawing the picture — for a full thirty-seven minutes. The automation in P4 is fifteen lines. It is only obvious <em>after</em> you have done it by hand, which is exactly why this part is the longest single stretch of the lecture.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1930" target="_blank" rel="noopener">32:10</a> — Manual backprop #1 begins: the base case, <span class="mono">dL/dL = 1</span>, typed into <span class="mono">L.grad</span> by hand.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=1959" target="_blank" rel="noopener">32:39</a> — The <span class="mono">lol()</span> staging function: a throwaway scope for numerically checking every gradient claim before believing it.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=2082" target="_blank" rel="noopener">34:42</a> — One step back: for <span class="mono">L = d·f</span>, <span class="mono">dL/dd = f</span> and <span class="mono">dL/df = d</span>, derived from the limit definition rather than recalled.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=2297" target="_blank" rel="noopener">38:17</a> — The crux node: <span class="mono">c</span> and <span class="mono">e</span> only reach <span class="mono">L</span> through <span class="mono">d</span>. The local derivative of a plus node is 1.0.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=2481" target="_blank" rel="noopener">41:21</a> — The chain rule, stated in the useful form, with the car/bicycle/walking-man intuition for why the rates multiply.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=2729" target="_blank" rel="noopener">45:29</a> — A plus node routes: <span class="mono">c.grad = e.grad = −2</span>, unchanged from what arrived. Verified numerically.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=2821" target="_blank" rel="noopener">47:01</a> — Through the times node to the leaves: <span class="mono">a.grad = 6</span>, <span class="mono">b.grad = −4</span>. Multiply nodes swap the inputs.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=3070" target="_blank" rel="noopener">51:10</a> — Preview of one optimization step: nudge every leaf by <span class="mono">0.01 × grad</span>, re-run the forward pass, watch <span class="mono">L</span> go from −8.0 to −7.286496.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=3172" target="_blank" rel="noopener">52:52</a> — Manual backprop #2: the mathematical model of a neuron, weights and bias and a squashing activation.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=3434" target="_blank" rel="noopener">57:14</a> — Why <span class="mono">tanh</span> is implemented as a single node: the level of abstraction is a free choice, bounded only by what you can differentiate.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=3772" target="_blank" rel="noopener">62:52</a> — Backprop through <span class="mono">tanh</span>: <span class="mono">do/dn = 1 − o²</span>, which with the chosen bias comes out to exactly 0.5.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=3988" target="_blank" rel="noopener">66:28</a> — The last two multiply nodes: <span class="mono">x1.grad = −1.5</span>, <span class="mono">w1.grad = 1.0</span>, <span class="mono">x2.grad = 0.5</span>, and <span class="mono">w2.grad = 0</span> — and why the zero is correct.</li>
+  </ul>
+
+  <h2>Start at the end, and check everything</h2>
+
+  <p>The first gradient is free. Backpropagation computes <span class="mono">dL/dx</span> for every node <span class="mono">x</span> in the graph, and the graph's own output is <span class="mono">L</span>, so the first question is <span class="mono">dL/dL</span> — how much does <span class="mono">L</span> change when you change <span class="mono">L</span> by <span class="mono">h</span>? It changes by <span class="mono">h</span>. The answer is 1.0, and Karpathy types it into <span class="mono">L.grad</span> directly. That is not a trick; it is the boundary condition that makes everything downstream well-posed. Every other gradient in the graph is eventually derived from this one.</p>
+
+  <p>Before deriving anything, though, he builds a way to be wrong out loud. The <span class="mono">lol()</span> function at <a href="https://youtu.be/VMj-3S1tku0?t=1959" target="_blank" rel="noopener">32:39</a> is a deliberately disposable scope: it constructs the expression twice, bumps exactly one input by <span class="mono">h = 0.001</span> in the second copy, and prints <span class="mono">(L2 − L1)/h</span>. Everything is local to the function, so the global notebook state stays clean — a small hygiene move that matters when you are going to run this a dozen times in a row with a different variable bumped each time. What it produces is the numerical gradient: the same quantity backprop claims to compute, obtained by brute force. Karpathy calls the practice a <b>gradient check</b>, and he uses it after every single claim in this section. It is the single most transferable habit in the part. When your hand-derived backward pass and your finite-difference estimate agree to five decimal places, you are done arguing.</p>
+
+  <p>One detail worth noticing: he has to write <span class="mono">L.data</span>, not <span class="mono">L</span>, in the subtraction, because <span class="mono">L</span> is now a <span class="mono">Value</span> object and there is no <span class="mono">__sub__</span> on it yet. Subtraction and division do not arrive until P5. The numerical check runs on raw Python floats living underneath the graph.</p>
+
+  <h2>One node at a time: local derivative × upstream gradient</h2>
+
+  <p>The expression is <span class="mono">a = 2.0</span>, <span class="mono">b = −3.0</span>, <span class="mono">c = 10.0</span>, <span class="mono">f = −2.0</span>, with <span class="mono">e = a·b</span>, <span class="mono">d = e + c</span>, <span class="mono">L = d·f</span>. Forward: <span class="mono">e = −6.0</span>, <span class="mono">d = 4.0</span>, <span class="mono">L = −8.0</span>.</p>
+
+  <p>The first real step is the multiply at the top. <span class="mono">L = d·f</span>, so <span class="mono">dL/dd = f = −2.0</span> and <span class="mono">dL/df = d = 4.0</span>. Karpathy does not just quote the product rule; he expands the limit definition on screen at <a href="https://youtu.be/VMj-3S1tku0?t=2114" target="_blank" rel="noopener">35:14</a>: <span class="mono">((d+h)·f − d·f)/h = (d·f + h·f − d·f)/h = f</span>. The <span class="mono">d·f</span> terms cancel, the <span class="mono">h</span> divides out, and what survives is the other input. That is the whole content of a multiply node's backward pass, and it is worth internalizing in that form: <b>a multiply node hands each input the value of the other one</b>.</p>
+
+  <p>Then comes the node the rest of the lecture rests on. <span class="mono">c</span> and <span class="mono">e</span> do not touch <span class="mono">L</span> directly — they only reach it through <span class="mono">d</span>. So the plus node is in a strange epistemic position: it knows it added two numbers to make <span class="mono">d</span>, and it knows nothing whatsoever about the graph it is embedded in. All it can compute is its own <em>local</em> derivative, <span class="mono">dd/dc</span>, which the same limit expansion shows is exactly 1.0 (<span class="mono">((c+h) + e − c − e)/h = h/h = 1</span>). What it needs from the outside world is a single number: how much <span class="mono">L</span> cares about <span class="mono">d</span>. That number, −2.0, was computed one step earlier and is sitting in <span class="mono">d.grad</span>.</p>
+
+  <blockquote class="q">now we're getting to the crux of backpropagation … this will be the most important node to understand, because if you understand the gradient for this node you understand all of backpropagation and all of training of neural nets, basically.<span class="cite">Karpathy, <a href="https://youtu.be/VMj-3S1tku0?t=2267" target="_blank" rel="noopener">37:47</a></span></blockquote>
+
+  <p>The chain rule is what glues the local fact to the global one. Karpathy pulls up the Wikipedia statement at <a href="https://youtu.be/VMj-3S1tku0?t=2481" target="_blank" rel="noopener">41:21</a> in its readable form — if <span class="mono">z</span> depends on <span class="mono">y</span> and <span class="mono">y</span> depends on <span class="mono">x</span>, then <span class="mono">dz/dx = (dz/dy)·(dy/dx)</span> — and then reaches for the intuition that makes multiplication feel inevitable rather than arbitrary: a car is twice as fast as a bicycle, a bicycle is four times as fast as a walking man, so the car is eight times as fast as the man. Rates of change compose by multiplying. Substituting <span class="mono">z = L</span>, <span class="mono">y = d</span>, <span class="mono">x = c</span>: <span class="mono">dL/dc = (dL/dd)·(dd/dc) = −2.0 × 1.0 = −2.0</span>.</p>
+
+  <p>Because the local derivative is 1.0, the plus node changes nothing. It copies the incoming gradient to each of its inputs unchanged — it <b>routes</b>. <span class="mono">c.grad = −2.0</span> and <span class="mono">e.grad = −2.0</span>. That is why every experienced practitioner's mental picture of a sum in a computation graph is a wire, not an operation.</p>
+
+  <p>One more step reaches the leaves. <span class="mono">e = a·b</span>, so the local derivatives are <span class="mono">de/da = b = −3.0</span> and <span class="mono">de/db = a = 2.0</span>, and the arriving gradient is <span class="mono">e.grad = −2.0</span>. Multiply: <span class="mono">a.grad = −2.0 × −3.0 = 6.0</span>, <span class="mono">b.grad = −2.0 × 2.0 = −4.0</span>.</p>
+
+  <table class="kv">
+    <thead><tr><th>Node</th><th>data</th><th>grad</th><th>Where the grad comes from</th><th>Numerical check</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">L</td><td class="mono">−8.0</td><td class="mono">1.0</td><td>Base case: <span class="mono">dL/dL</span></td><td class="mono">1.0</td></tr>
+      <tr><td class="mono">f</td><td class="mono">−2.0</td><td class="mono">4.0</td><td>Multiply node hands over the other input, <span class="mono">d</span></td><td class="mono">3.9999999999995595</td></tr>
+      <tr><td class="mono">d</td><td class="mono">4.0</td><td class="mono">−2.0</td><td>Multiply node hands over the other input, <span class="mono">f</span></td><td class="mono">−1.9999999999953388</td></tr>
+      <tr><td class="mono">c</td><td class="mono">10.0</td><td class="mono">−2.0</td><td>Plus node routes: <span class="mono">1.0 × d.grad</span></td><td class="mono">−1.9999999999953388</td></tr>
+      <tr><td class="mono">e</td><td class="mono">−6.0</td><td class="mono">−2.0</td><td>Plus node routes: <span class="mono">1.0 × d.grad</span></td><td class="mono">−2.0</td></tr>
+      <tr><td class="mono">a</td><td class="mono">2.0</td><td class="mono">6.0</td><td><span class="mono">b.data × e.grad = −3.0 × −2.0</span></td><td class="mono">6.000000000021544</td></tr>
+      <tr><td class="mono">b</td><td class="mono">−3.0</td><td class="mono">−4.0</td><td><span class="mono">a.data × e.grad = 2.0 × −2.0</span></td><td class="mono">−3.9999999999995595</td></tr>
+    </tbody>
+  </table>
+
+  <p>The numerical column is what he actually prints in the video, and the trailing digits are not noise to be embarrassed about — they are the fingerprint of finite differences. The estimate is biased by <span class="mono">O(h)</span> and corrupted by floating-point cancellation in the numerator, so agreement to ten digits is as good as it gets. That mismatch pattern is itself diagnostic: an error in the eleventh decimal is float behaviour, an error in the first is a wrong derivative.</p>
+
+  <blockquote class="q">that's what backpropagation is — just a recursive application of chain rule backwards through the computation graph.<span class="cite">Karpathy, <a href="https://youtu.be/VMj-3S1tku0?t=3037" target="_blank" rel="noopener">50:37</a></span></blockquote>
+
+  <div class="callout off">The rule, in the form that survives the rest of the series: <b>at every node, gradient-out × local-derivative = gradient-in</b>. The node knows only its own operation; the graph supplies everything else through the single number sitting in <span class="mono">out.grad</span>. Plus routes it, multiply swaps the inputs and scales, <span class="mono">tanh</span> scales by <span class="mono">1 − out²</span>. Everything after this — the closures in P4, the training loop in P7, PyTorch itself — is bookkeeping around that one line.</div>
+
+  <h2>One optimization step, previewed</h2>
+
+  <p>At <a href="https://youtu.be/VMj-3S1tku0?t=3070" target="_blank" rel="noopener">51:10</a> Karpathy stops to show what the gradients are <em>for</em>, and it takes four lines. Each leaf moves a small distance in the direction of its own gradient, <span class="mono">x.data += 0.01 * x.grad</span>, and then the forward pass is re-run. Note the sign: he is deliberately making <span class="mono">L</span> go <em>up</em> here, because <span class="mono">L</span> is not yet a loss — it is just an output. In P7, once <span class="mono">L</span> is a loss to be minimized, the same line gets a minus sign in front of the step and nothing else changes.</p>
+
+  <p>The arithmetic: <span class="mono">a</span> goes 2.0 → 2.06, <span class="mono">b</span> goes −3.0 → −3.04, <span class="mono">c</span> goes 10.0 → 9.98, <span class="mono">f</span> goes −2.0 → −1.96. Forward again: <span class="mono">e = −6.2624</span>, <span class="mono">d = 3.7176</span>, <span class="mono">L = −7.286496</span>. He guesses "maybe negative six or so" before running it and lands on −7.29, which is worth noticing as an honest miss — the first-order prediction is that <span class="mono">L</span> rises by <span class="mono">0.01 × (6² + 4² + 2² + 4²) = 0.72</span>, and it rises by 0.713. The gradient tells you the direction reliably and the magnitude only for small steps. That gap is the entire subject of learning rates in P7.</p>
+
+  <h2>The neuron: the same procedure, on a shape that matters</h2>
+
+  <p>The second worked example is chosen so the machinery lands on something recognizable. A neuron in the standard cartoon takes inputs <span class="mono">x</span>, multiplies each by a synaptic weight <span class="mono">w</span>, sums them, adds a bias <span class="mono">b</span> that Karpathy glosses as the neuron's innate "trigger-happiness", and passes the total through a squashing activation function. Written out with every intermediate given its own labelled <span class="mono">Value</span> — which is the point, since you need pointers to those intermediates to inspect their gradients — it becomes <span class="mono">n = x1·w1 + x2·w2 + b</span> and <span class="mono">o = tanh(n)</span>.</p>
+
+  <p><span class="mono">tanh</span> forces a decision. It cannot be built from the <span class="mono">+</span> and <span class="mono">*</span> that <span class="mono">Value</span> currently supports; it needs exponentiation. Karpathy notes he <em>could</em> implement <span class="mono">exp</span> and compose — and in P5 he goes back and does exactly that, as a demonstration — but here he implements <span class="mono">tanh</span> directly as one node, and makes the general point explicit.</p>
+
+  <blockquote class="q">we can create functions at arbitrary points of abstraction … the only thing that matters is that we know how to differentiate through any one function.<span class="cite">Karpathy, <a href="https://youtu.be/VMj-3S1tku0?t=3495" target="_blank" rel="noopener">58:15</a></span></blockquote>
+
+  <p>This is the load-bearing design principle of every autodiff library. A node can be as coarse or as fine as you like — a single addition, a whole <span class="mono">tanh</span>, an entire fused attention kernel — provided you can state its local derivative. Granularity is a performance and convenience decision, not a correctness one.</p>
+
+  <p>Then the bias. At <a href="https://youtu.be/VMj-3S1tku0?t=3679" target="_blank" rel="noopener">61:19</a> Karpathy sets <span class="mono">b = 6.8813735870195432</span> and says plainly that he picked it so the numbers come out nice. They do, and it is worth seeing why. With <span class="mono">x1 = 2.0</span>, <span class="mono">w1 = −3.0</span>, <span class="mono">x2 = 0.0</span>, <span class="mono">w2 = 1.0</span>, the weighted sum is <span class="mono">−6.0</span>, so <span class="mono">n = 0.8813735870195432</span> — and that is precisely <span class="mono">artanh(1/√2)</span>. Therefore <span class="mono">o = tanh(n) = 0.7071067811865476 = 1/√2</span>, and the tanh derivative <span class="mono">1 − o²</span> is exactly <span class="mono">1 − ½ = 0.5</span>. Every gradient in the backward pass is then a small multiple of one half. It is a staged demo, and he says so; the honesty is the point, because it means you can check his arithmetic mentally instead of trusting the printout.</p>
+
+  <h2>The gradients through the neuron</h2>
+
+  <p>Same procedure, five steps. Start at <span class="mono">o.grad = 1.0</span>. Through the <span class="mono">tanh</span>: the derivative of <span class="mono">tanh(x)</span> is <span class="mono">1 − tanh²(x)</span>, which Karpathy looks up on Wikipedia rather than deriving, and since <span class="mono">tanh(n)</span> is already sitting in <span class="mono">o.data</span> the local derivative is <span class="mono">1 − o.data² = 0.5</span>. So <span class="mono">n.grad = 0.5</span>. Then two plus nodes in a row, each routing that 0.5 unchanged to both children: the bias <span class="mono">b</span>, the partial sum, and then <span class="mono">x1·w1</span> and <span class="mono">x2·w2</span> all get 0.5. Finally two multiply nodes, each handing over the other input scaled by the 0.5 that arrived.</p>
+
+  <table class="kv">
+    <thead><tr><th>Node</th><th>data</th><th>grad</th><th>Rule applied</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">o</td><td class="mono">0.7071067811865476</td><td class="mono">1.0</td><td>base case</td></tr>
+      <tr><td class="mono">n</td><td class="mono">0.8813735870195432</td><td class="mono">0.5</td><td><span class="mono">(1 − o.data²) × o.grad</span></td></tr>
+      <tr><td class="mono">b</td><td class="mono">6.8813735870195432</td><td class="mono">0.5</td><td>plus routes</td></tr>
+      <tr><td class="mono">x1*w1 + x2*w2</td><td class="mono">−6.0</td><td class="mono">0.5</td><td>plus routes</td></tr>
+      <tr><td class="mono">x1*w1</td><td class="mono">−6.0</td><td class="mono">0.5</td><td>plus routes</td></tr>
+      <tr><td class="mono">x2*w2</td><td class="mono">0.0</td><td class="mono">0.5</td><td>plus routes</td></tr>
+      <tr><td class="mono">x1</td><td class="mono">2.0</td><td class="mono">−1.5</td><td><span class="mono">w1.data × 0.5 = −3.0 × 0.5</span></td></tr>
+      <tr><td class="mono">w1</td><td class="mono">−3.0</td><td class="mono">1.0</td><td><span class="mono">x1.data × 0.5 = 2.0 × 0.5</span></td></tr>
+      <tr><td class="mono">x2</td><td class="mono">0.0</td><td class="mono">0.5</td><td><span class="mono">w2.data × 0.5 = 1.0 × 0.5</span></td></tr>
+      <tr><td class="mono">w2</td><td class="mono">1.0</td><td class="mono">0.0</td><td><span class="mono">x2.data × 0.5 = 0.0 × 0.5</span></td></tr>
+    </tbody>
+  </table>
+
+  <p>The interesting entry is the zero. <span class="mono">w2.grad = 0</span> because <span class="mono">x2 = 0</span>, and Karpathy pauses at <a href="https://youtu.be/VMj-3S1tku0?t=4021" target="_blank" rel="noopener">67:01</a> to make sure the intuition lands: wiggling <span class="mono">w2</span> cannot change the output, because whatever you set it to gets multiplied by zero. A gradient of zero is not a failure of the method, it is a true statement about this network at this input — that weight is invisible to this example, and gradient descent will leave it exactly where it is. The mirror-image fact is <span class="mono">w1.grad = 1.0</span>, the largest gradient in the graph: raise <span class="mono">w1</span> and the neuron fires harder, at a rate of one to one.</p>
+
+  <p>Note also the practical asymmetry. In training you want the gradients on <span class="mono">w1</span> and <span class="mono">w2</span>, because weights are what you change. The gradients on <span class="mono">x1</span> and <span class="mono">x2</span> fall out of the same pass for free, and in a single neuron they are useless — data is fixed. In a deeper network they are not useless at all: the <span class="mono">x</span> of one layer is the <span class="mono">o</span> of the layer below, so those input gradients are exactly the signal that keeps propagating. That is why backprop is worth automating rather than special-casing.</p>
+
+  <h2 id="code">The code at the end of this part</h2>
+
+  <p>The gradient-check harness, verbatim from the notebook. It bumps <span class="mono">b</span>; in the video the bumped line moves around as he checks each variable in turn.</p>
+
+  <pre class="code-block"><code>def lol():
+
+  h = 0.001
+
+  a = Value(2.0, label='a')
+  b = Value(-3.0, label='b')
+  c = Value(10.0, label='c')
+  e = a*b; e.label = 'e'
+  d = e + c; d.label = 'd'
+  f = Value(-2.0, label='f')
+  L = d * f; L.label = 'L'
+  L1 = L.data
+
+  a = Value(2.0, label='a')
+  b = Value(-3.0, label='b')
+  b.data += h
+  c = Value(10.0, label='c')
+  e = a*b; e.label = 'e'
+  d = e + c; d.label = 'd'
+  f = Value(-2.0, label='f')
+  L = d * f; L.label = 'L'
+  L2 = L.data
+
+  print((L2 - L1)/h)
+
+lol()</code></pre>
+
+  <p>Prints <span class="mono">-3.9999999999995595</span>, matching the hand-derived <span class="mono">b.grad = −4</span>. The whole expression is rebuilt from scratch in both halves because <span class="mono">Value</span> nodes cache their <span class="mono">data</span> at construction time — there is no forward-pass replay yet, so mutating <span class="mono">b.data</span> after the fact would not update <span class="mono">e</span>, <span class="mono">d</span> or <span class="mono">L</span>.</p>
+
+  <p>One optimization step, previewed:</p>
+
+  <pre class="code-block"><code>a.data += 0.01 * a.grad
+b.data += 0.01 * b.grad
+c.data += 0.01 * c.grad
+f.data += 0.01 * f.grad
+
+e = a * b
+d = e + c
+L = d * f
+
+print(L.data)</code></pre>
+
+  <p>Four update lines and a forward pass. This is the entire skeleton of the training loop that arrives in <a class="lnk" href="p07.html">P7</a>; the only differences there are that the parameters come from <span class="mono">n.parameters()</span> instead of being named by hand, and the step is negated because the objective becomes a loss.</p>
+
+  <p>The neuron, verbatim, with every intermediate labelled so it can be read off the graph:</p>
+
+  <pre class="code-block"><code># inputs x1,x2
+x1 = Value(2.0, label='x1')
+x2 = Value(0.0, label='x2')
+# weights w1,w2
+w1 = Value(-3.0, label='w1')
+w2 = Value(1.0, label='w2')
+# bias of the neuron
+b = Value(6.8813735870195432, label='b')
+# x1*w1 + x2*w2 + b
+x1w1 = x1*w1; x1w1.label = 'x1*w1'
+x2w2 = x2*w2; x2w2.label = 'x2*w2'
+x1w1x2w2 = x1w1 + x2w2; x1w1x2w2.label = 'x1*w1 + x2*w2'
+n = x1w1x2w2 + b; n.label = 'n'
+o = n.tanh(); o.label = 'o'</code></pre>
+
+  <p>And the <span class="mono">tanh</span> method as it stands at the end of this part — the exponential form of <span class="mono">tanh</span>, one child in the tuple, <span class="mono">'tanh'</span> as the op label so <span class="mono">draw_dot</span> prints it:</p>
+
+  <pre class="code-block"><code>def tanh(self):
+    x = self.data
+    t = (math.exp(2*x) - 1)/(math.exp(2*x) + 1)
+    out = Value(t, (self, ), 'tanh')
+    return out</code></pre>
+
+  <p>Two notes on that cell. First, <span class="mono">(self, )</span> needs the trailing comma — it is a one-element tuple, not a parenthesised expression, and dropping the comma is a real bug that silently makes <span class="mono">_prev</span> iterate over the <span class="mono">Value</span> instead of containing it. Second, in the saved notebook this method has a <span class="mono">_backward</span> closure attached; that is added in <a class="lnk" href="p04.html">P4</a>, not here, which is why the version above stops at <span class="mono">return out</span>. The finished library takes a different route again — <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L45" target="_blank" rel="noopener">engine.py ships <span class="mono">relu</span>, not <span class="mono">tanh</span></a>.</p>
+
+  <p>Finally, the by-hand backward pass through the neuron. In the notebook these are separate cells typed bottom-up as he worked backwards; reordered here into the order the gradients actually flow:</p>
+
+  <pre class="code-block"><code>o.grad = 1.0
+n.grad = 0.5                      # 1 - o.data**2, looked up on Wikipedia
+x1w1x2w2.grad = 0.5               # plus routes
+b.grad = 0.5                      # plus routes
+x1w1.grad = 0.5                   # plus routes
+x2w2.grad = 0.5                   # plus routes
+x2.grad = w2.data * x2w2.grad     # 1.0 * 0.5  ->  0.5
+w2.grad = x2.data * x2w2.grad     # 0.0 * 0.5  ->  0.0
+x1.grad = w1.data * x1w1.grad     # -3.0 * 0.5 -> -1.5
+w1.grad = x1.data * x1w1.grad     # 2.0 * 0.5  ->  1.0</code></pre>
+
+  <p>Ten assignments for a neuron with two inputs. This is the "obviously ridiculous" that P4 opens by putting an end to: each of those right-hand sides is a fixed function of the node's operation and its children, so each belongs on the node itself. Compare the last two lines with <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L28" target="_blank" rel="noopener">the closure inside <span class="mono">__mul__</span> in engine.py</a> — <span class="mono">self.grad += other.data * out.grad</span> — and the correspondence is exact except for the <span class="mono">+=</span>, which is the subject of the accumulation bug in P4.</p>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"Why is the derivative of <span class="mono">a + b</span> with respect to <span class="mono">a</span> equal to 1, and why does that mean the gradient is copied?"</b> — Bump <span class="mono">a</span> by <span class="mono">h</span> and the sum goes up by exactly <span class="mono">h</span>; rise over run is 1. Then the chain rule multiplies the upstream gradient by that 1, which leaves it unchanged. The two facts are separate and both matter: the local derivative is 1 because addition is unit-slope in each argument, and the routing behaviour follows from multiplying by 1. If you skip the chain-rule step you will be surprised later when a plus node <em>does</em> change the gradient — it never does, but a plus node whose output feeds two places contributes twice, which is a different phenomenon (P4's accumulation bug).</li>
+    <li><b>"Why is <span class="mono">w2.grad</span> zero? Did something break?"</b> — No. <span class="mono">w2</span> is multiplied by <span class="mono">x2 = 0</span>, so no change to <span class="mono">w2</span> can change the output. The gradient is a statement about this network <em>at this input</em>, and zero is the honest answer. Practical consequence: gradient descent will not move that weight on this example. Feed a different example where <span class="mono">x2 ≠ 0</span> and it moves. This is also the mechanism behind dead ReLU units and behind why data that is identically zero in a feature teaches the model nothing about the corresponding weight.</li>
+    <li><b>"Why <span class="mono">1 − o²</span> and not <span class="mono">1 − n²</span>?"</b> — The derivative of <span class="mono">tanh</span> at a point <span class="mono">n</span> is <span class="mono">1 − tanh²(n)</span>, and <span class="mono">tanh(n)</span> is the node's own <em>output</em>, which is already computed and stored in <span class="mono">o.data</span>. Writing it in terms of the output is not a different formula, it is the same formula with a free lunch: the forward pass already paid for the expensive part. Autodiff libraries do this constantly — PyTorch's own <span class="mono">tanh</span> backward is the same expression on the saved output, which the lecture goes and reads in <a class="lnk" href="p08.html">P8</a>.</li>
+    <li><b>"He writes <span class="mono">=</span> here but the library writes <span class="mono">+=</span>. Which is right?"</b> — <span class="mono">+=</span> is right, and this part gets away with <span class="mono">=</span> only because in both examples every node feeds exactly one consumer. The moment a value is used twice — <span class="mono">b = a + a</span> is the minimal case — the second assignment overwrites the first and you lose half the gradient. Karpathy hits this deliberately at 82:28 in <a class="lnk" href="p04.html">P4</a>. If you are typing along by hand, use <span class="mono">=</span> here as he does, but expect the change and understand that it is the multivariable chain rule: contributions along distinct paths add.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L13" target="_blank" rel="noopener">engine.py, <span class="mono">__add__</span> (L13–L22)</a> — Andrej Karpathy · the plus node's routing behaviour, mechanized: <span class="mono">self.grad += out.grad</span> for both children, exactly the by-hand step at 45:29.</li>
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L24" target="_blank" rel="noopener">engine.py, <span class="mono">__mul__</span> (L24–L33)</a> — Andrej Karpathy · the swap-the-other-input rule, mechanized. Read it next to the last two lines of the by-hand neuron backward pass above.</li>
+    <li><a href="https://en.wikipedia.org/wiki/Chain_rule" target="_blank" rel="noopener">Chain rule</a> — Wikipedia · the page Karpathy pulls up at 41:21, including the car/bicycle/walking-man intuition he quotes. The section on the multivariable case is the one that explains P4's <span class="mono">+=</span>.</li>
+    <li><a href="https://en.wikipedia.org/wiki/Hyperbolic_functions" target="_blank" rel="noopener">Hyperbolic functions</a> — Wikipedia · where <span class="mono">d/dx tanh(x) = 1 − tanh²(x)</span> comes from, and the exponential definition used in the <span class="mono">tanh</span> method.</li>
+    <li><a href="https://cs231n.github.io/optimization-2/" target="_blank" rel="noopener">CS231n: Backpropagation, Intuitions</a> — Andrej Karpathy et al. (2015–) · <em>field map extra</em> · the written version of this same material, with the "add gate is a gradient distributor, multiply gate is a gradient switcher" framing and staged circuit diagrams. The closest thing to a textbook for this part.</li>
+    <li><a href="https://www.nature.com/articles/323533a0" target="_blank" rel="noopener">Learning representations by back-propagating errors</a> — Rumelhart, Hinton &amp; Williams (1986) · <em>field map extra</em> · the paper that put this procedure in front of the field. Worth reading once to see how much of the modern practice is already there and how differently it is written.</li>
+    <li><a href="https://pytorch.org/docs/stable/notes/gradcheck.html" target="_blank" rel="noopener">Gradcheck mechanics</a> — PyTorch docs · <em>field map extra</em> · the industrial version of the <span class="mono">lol()</span> function: why the central difference beats the forward difference, how to choose <span class="mono">h</span>, and why the tolerances are what they are.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Redo backprop #1 with one constant changed</b><span class="code">code</span> — Set <span class="mono">f = 3.0</span> instead of <span class="mono">−2.0</span> and, before running anything, write down all six gradients on paper. Then rebuild the expression, fill in <span class="mono">.grad</span> by hand exactly as in the video, and confirm each one with a <span class="mono">lol()</span>-style bump. A good answer explains <em>why</em> <span class="mono">a.grad</span> flips sign from 6 to −9 in terms of the two multiply nodes it passes through, and notes that <span class="mono">c.grad</span> and <span class="mono">e.grad</span> stay equal to each other no matter what you change, because the plus node in between routes.</li>
+    <li><b>Break the numerical check on purpose</b><span class="code">code</span> — Take <span class="mono">dL/da = 6</span> and estimate it with <span class="mono">h</span> = 1, 1e-2, 1e-4, 1e-6, 1e-8, 1e-10, 1e-14. Plot <span class="mono">|estimate − 6|</span> against <span class="mono">h</span> on log axes. You should see error fall as <span class="mono">h</span> shrinks, bottom out somewhere around 1e-6 to 1e-8, and then climb again as catastrophic cancellation in <span class="mono">L2 − L1</span> takes over. Then repeat with the central difference <span class="mono">(f(x+h) − f(x−h))/(2h)</span> and note that the floor drops by several orders of magnitude. This is section 1 of the <a href="https://colab.research.google.com/drive/1FPTx1RXtBfc4MaTkf7viZZD4U2F9gtKN?usp=sharing" target="_blank" rel="noopener">official exercise Colab</a>, whose third part asks for exactly this symmetric-difference improvement — the backprop half of that notebook belongs to <a class="lnk" href="p05.html">P5</a>, but the gradient-checking half is this part's material.</li>
+    <li><b>The neuron with <span class="mono">x2</span> switched on</b> — Re-run the manual neuron backward pass with <span class="mono">x2 = 1.0</span> instead of <span class="mono">0.0</span>, pencil first. Note that <span class="mono">n</span> is no longer 0.8813735870195432, so <span class="mono">1 − o²</span> is no longer a clean 0.5 and every downstream number gets messy — which is the whole reason Karpathy staged the bias. A good answer states what <span class="mono">w2.grad</span> becomes and why it is no longer zero, and checks the largest and smallest gradients against a numerical bump.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p04.html">P04 Automating backward: per-op closures, topological order, and the accumulation bug</a> · Back to the <a class="lnk" href="../index.html#backprop">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "building micrograd" (2022), part 03. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

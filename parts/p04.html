@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P04 Automating backward — micrograd, mapped</title>
+<meta name="description" content="How each operation stores a closure that pushes its gradient backwards, why backward() walks a reverse topological order, and why grad must accumulate." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>MICROGRAD&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#backprop">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box wb mono">PART 04 · BACKPROPAGATION, BY HAND AND THEN AUTOMATED</span><span class="mono">69:02–87:05 · 18 min</span></div>
+  <h1>Automating backward: per-op closures, topological order, and the accumulation bug</h1>
+  <div class="authors">Andrej Karpathy · building micrograd (2022) · part 04 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Video</span><a href="https://youtu.be/VMj-3S1tku0?t=4142" target="_blank" rel="noopener">Start this part at 69:02 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Code</span><a href="https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/micrograd/micrograd_lecture_first_half_roughly.ipynb" target="_blank" rel="noopener">micrograd_lecture_first_half_roughly.ipynb · the Value class grows _backward, backward(), and += ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-4142">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> P3 filled in every <span class="mono">grad</span> in a neuron by typing the chain rule into cells by hand. This part deletes that work three times over. First, each operation gets a small function — a closure captured at the moment the output node is built — that knows how to convert the output's gradient into contributions to its inputs' gradients; that is the entire content of "backprop through a plus" or "backprop through a tanh." Second, <span class="mono">backward()</span> figures out the order to call those functions in: build a topological order of the graph, seed the output's gradient at 1.0, and walk the list in reverse so no node is processed before everything downstream of it has already deposited into it. Third, a bug surfaces the moment a value is used twice — <span class="mono">b = a + a</span> reports <span class="mono">a.grad</span> of 1 when the answer is 2 — and the fix is one character per line: gradients must be <span class="mono">+=</span> accumulated, never assigned. Remember the shape of the thing: <b>local derivative × upstream gradient, accumulated, in reverse topological order.</b> Everything after this in the lecture is applying it at scale.</div>
+
+  <p class="lead">This is the hinge of the lecture. Up to 69:02 backpropagation has been a thing Karpathy does — an activity, performed by a human who understands calculus, typing <span class="mono">x1.grad = w1.data * x1w1.grad</span> into a notebook cell one node at a time. By 87:05 it is a thing the data structure does to itself. Nothing about the mathematics changes across those eighteen minutes; every formula that appears was already derived by hand in P3. What changes is where the knowledge lives. The chain rule for an addition stops being something in Karpathy's head and becomes a Python function stored on the node that the addition produced. That relocation is what "autograd engine" means, and it is roughly forty lines of code.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=4142" target="_blank" rel="noopener">69:02</a> — <b>Chapter: implementing the backward function for each operation.</b> The manual approach is declared dead; the per-node chain-rule step moves onto the node itself, defaulting to <span class="mono">lambda: None</span> for leaves.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=4240" target="_blank" rel="noopener">70:40</a> — <b>The closure for addition.</b> Defined inside <span class="mono">__add__</span> after <span class="mono">out</span> exists, so it can see <span class="mono">self</span>, <span class="mono">other</span> and <span class="mono">out</span>; local derivative 1.0, so the gradient is copied to both inputs.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=4331" target="_blank" rel="noopener">72:11</a> — <b>The closure for multiplication.</b> Local derivative of a product with respect to one factor is the <em>other</em> factor's data; the two operands swap.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=4362" target="_blank" rel="noopener">72:42</a> — <b>The closure for tanh.</b> Local derivative 1 − t², where t is the output the forward pass already computed and the closure still holds.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=4454" target="_blank" rel="noopener">74:14</a> — <b>Calling them by hand, and the base case.</b> <span class="mono">o.grad</span> must be set to 1.0 first, or every closure multiplies by zero.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=4517" target="_blank" rel="noopener">75:17</a> — <b>The typo he leaves in.</b> <span class="mono">out._backward = _backward()</span> stores <span class="mono">None</span>; the fix is to drop the parentheses.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=4652" target="_blank" rel="noopener">77:32</a> — <b>Chapter: backward for a whole expression graph.</b> The ordering constraint stated: a node's own gradient must be final before it is allowed to push anything backwards.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=4704" target="_blank" rel="noopener">78:24</a> — <b>Topological sort, and <span class="mono">build_topo</span>.</b> The graph is a DAG, so a linear order exists in which every edge points forward; the depth-first builder appends a node only after all of its children, and reversing that list is a legal backward schedule.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=4886" target="_blank" rel="noopener">81:26</a> — <b>Folded into <span class="mono">Value.backward()</span>.</b> Build the order, seed <span class="mono">self.grad = 1.0</span>, loop over <span class="mono">reversed(topo)</span> calling <span class="mono">_backward()</span>.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=4948" target="_blank" rel="noopener">82:28</a> — <b>Chapter: the bug when one node is used more than once.</b> <span class="mono">b = a + a</span> gives <span class="mono">a.grad = 1</span>; then a second, less obvious example with a shared input.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=5103" target="_blank" rel="noopener">85:03</a> — <b>The fix.</b> The multivariate chain rule adds contributions along every path, so every assignment to <span class="mono">grad</span> becomes <span class="mono">+=</span>.</li>
+    <li><a href="https://youtu.be/VMj-3S1tku0?t=5198" target="_blank" rel="noopener">86:38</a> — <b>Cleanup.</b> The scratch cells are deleted, the class survives, and the next question is whether tanh had to be a primitive at all.</li>
+  </ul>
+
+  <h2>One closure per operation</h2>
+
+  <p>The idea is small enough to state in one sentence: <b>every node that was produced by an operation should carry a function that knows how to push its own gradient into the gradients of the things it was built from.</b> Not "how to compute a derivative" in the abstract — how to push <em>this</em> node's gradient into <em>these</em> specific inputs. That specificity is why a closure is the right tool. When <span class="mono">__mul__</span> runs, it has three objects in scope that matter: <span class="mono">self</span>, <span class="mono">other</span>, and the freshly built <span class="mono">out</span>. A function defined inside <span class="mono">__mul__</span> captures all three by reference, so it can be called later — much later, in a completely different part of the program — and still be talking about the same three nodes.</p>
+
+  <p>The constructor gains a default so that every node has the attribute whether or not anything meaningful lives there:</p>
+
+  <pre class="code-block"><code>self._backward = lambda: None</code></pre>
+
+  <p>That default is not a placeholder to be filled in later; for a leaf it is the correct and final answer. <span class="mono">x1</span>, <span class="mono">w1</span>, <span class="mono">b</span> are inputs. They have no children. There is nothing for them to propagate into, so their <span class="mono">_backward</span> does nothing, forever. The uniformity matters more than it looks: it means the driver loop later can call <span class="mono">node._backward()</span> on every node in the graph without ever checking what kind of node it is.</p>
+
+  <p>Then the three operations each grow four lines:</p>
+
+  <pre class="code-block"><code>def __add__(self, other):
+  out = Value(self.data + other.data, (self, other), '+')
+
+  def _backward():
+    self.grad += 1.0 * out.grad
+    other.grad += 1.0 * out.grad
+  out._backward = _backward
+
+  return out
+
+def __mul__(self, other):
+  out = Value(self.data * other.data, (self, other), '*')
+
+  def _backward():
+    self.grad += other.data * out.grad
+    other.grad += self.data * out.grad
+  out._backward = _backward
+
+  return out
+
+def tanh(self):
+  x = self.data
+  t = (math.exp(2*x) - 1)/(math.exp(2*x) + 1)
+  out = Value(t, (self, ), 'tanh')
+
+  def _backward():
+    self.grad += (1 - t**2) * out.grad
+  out._backward = _backward
+
+  return out</code></pre>
+
+  <p>Read each closure body as one instance of the chain rule, written in the same shape every time: <b>input's gradient gets the local derivative of the output with respect to that input, times the output's gradient.</b> The second factor, <span class="mono">out.grad</span>, is the part that arrives from downstream — it already encodes everything that happens between this node and the final scalar. The first factor is the only new information this node contributes.</p>
+
+  <p>For addition, the local derivative of <span class="mono">a + b</span> with respect to <span class="mono">a</span> is 1, and with respect to <span class="mono">b</span> is also 1. So a plus node does nothing but hand its gradient, unchanged, to both children. That is why Karpathy keeps calling additions the easy ones: a plus is a <em>router</em>. For multiplication the local derivative with respect to one factor is the other factor's value, so a times node <em>swaps and scales</em> — and note it reads <span class="mono">other.data</span>, the forward value, not <span class="mono">other.grad</span>. Mixing those two up is the single most common typo in a hand-written engine. For tanh the local derivative is 1 − tanh(x)², and the closure does not recompute a tanh: it captured <span class="mono">t</span>, the number the forward pass already produced, and uses that. This is the general trick in every real autograd — the backward pass is cheap partly because the forward pass left useful intermediates lying around in closures.</p>
+
+  <p>One line is easy to skim past. <span class="mono">out._backward = _backward</span> stores the function object; it does not call it. Karpathy gets this wrong live, writes <span class="mono">out._backward = _backward()</span>, and hits <span class="mono">TypeError: 'NoneType' object is not callable</span> a few minutes later when the driver tries to invoke the <span class="mono">None</span> that the call returned. He keeps the mistake in the video on purpose.</p>
+
+  <blockquote class="q off">i thought about redoing it but i figured i should just leave the error in here because it's pretty funny
+    <span class="cite">Andrej Karpathy, <a href="https://youtu.be/VMj-3S1tku0?t=4517" target="_blank" rel="noopener">75:17 ↗</a> (auto-captions)</span>
+  </blockquote>
+
+  <h2>Driving it by hand, and the base case</h2>
+
+  <p>Before automating the order, he calls the closures manually, top down, on the neuron graph from P3: <span class="mono">o._backward()</span>, then <span class="mono">n._backward()</span>, then <span class="mono">x1w1x2w2._backward()</span>, then the two product nodes. Each call redraws the graph with one more layer of gradients filled in, and the numbers match the ones derived by hand in the previous part exactly — which is the point of doing it this way rather than jumping straight to <span class="mono">backward()</span>.</p>
+
+  <p>The first attempt produces nothing, and the reason is worth internalizing. <span class="mono">grad</span> is initialized to 0.0 on every node, including the output. Every closure multiplies by <span class="mono">out.grad</span>. Multiply anything by zero and the whole graph stays zero. So the driver needs a base case: set the output's gradient to 1.0, on the grounds that the derivative of the output with respect to itself is 1. That single seed is what makes all the other numbers mean "derivative of <span class="mono">o</span> with respect to this node" rather than "derivative of something else."</p>
+
+  <p>With <span class="mono">o.grad = 1.0</span> and the closures called in order, the neuron comes out like this — <span class="mono">o.data</span> is 0.7071, so the tanh's local derivative 1 − o² is exactly 0.5, and that 0.5 is what flows through the rest of the graph:</p>
+
+  <table class="kv">
+    <tr><th>node</th><th>data</th><th>local rule applied</th><th>grad</th></tr>
+    <tr><td>o = tanh(n)</td><td>0.7071</td><td>base case</td><td>1.0</td></tr>
+    <tr><td>n</td><td>0.8814</td><td>(1 − o²) × o.grad = 0.5 × 1</td><td>0.5</td></tr>
+    <tr><td>x1*w1 + x2*w2</td><td>−6.0</td><td>plus routes n.grad</td><td>0.5</td></tr>
+    <tr><td>b</td><td>6.8814</td><td>plus routes n.grad</td><td>0.5</td></tr>
+    <tr><td>x1*w1</td><td>−6.0</td><td>plus routes 0.5</td><td>0.5</td></tr>
+    <tr><td>x2*w2</td><td>0.0</td><td>plus routes 0.5</td><td>0.5</td></tr>
+    <tr><td>x1</td><td>2.0</td><td>w1.data × 0.5 = −3 × 0.5</td><td>−1.5</td></tr>
+    <tr><td>w1</td><td>−3.0</td><td>x1.data × 0.5 = 2 × 0.5</td><td>1.0</td></tr>
+    <tr><td>x2</td><td>0.0</td><td>w2.data × 0.5 = 1 × 0.5</td><td>0.5</td></tr>
+    <tr><td>w2</td><td>1.0</td><td>x2.data × 0.5 = 0 × 0.5</td><td>0.0</td></tr>
+  </table>
+
+  <p>The zero on <span class="mono">w2</span> is not a bug and is worth a beat of thought: <span class="mono">x2</span> is 0, so nudging <span class="mono">w2</span> cannot change the product <span class="mono">x2*w2</span>, and therefore cannot change the output. A dead input kills the gradient on its weight. That is a real property of trained networks, not a quirk of this toy — it is the same mechanism that makes gradients vanish behind a saturated or zeroed unit.</p>
+
+  <h2>Topological order: why you cannot just recurse</h2>
+
+  <p>Calling the closures by hand works only because Karpathy knows the graph and picks the order himself. The rule he is following without saying it out loud: <b>a node may only run its <span class="mono">_backward</span> once its own <span class="mono">grad</span> is final</b> — that is, once every node that consumes it has already deposited its contribution. Push too early and you propagate a partial number, and nothing downstream will ever come back to correct it.</p>
+
+  <p>The naive alternative — recurse from the output and call each child's <span class="mono">_backward</span> as soon as you reach it — fails on any graph that is not a simple chain. Consider a diamond: one node feeding two different consumers that later merge. Depth-first will reach the shared node through the first consumer, propagate from it while its gradient is still half-assembled, and then reach it again through the second. This is exactly the structure of every neural network, where one activation feeds many downstream units, so it is not a corner case.</p>
+
+  <p>The scheduling problem has a standard answer, and Karpathy explicitly declines to derive it — he points at the Wikipedia article and moves on, which is the right call for a lecture but does mean the one genuinely graph-theoretic idea in micrograd arrives as a black box. A <b>topological order</b> of a directed acyclic graph is a linear arrangement in which every edge points forward. The expression graph is a DAG by construction: edges run from inputs to outputs, and you cannot build a cycle by evaluating Python expressions. So a topological order exists, and running it <em>backwards</em> guarantees that when you reach a node, everything that depends on it has already been visited — precisely the invariant the closures need.</p>
+
+  <pre class="code-block"><code>topo = []
+visited = set()
+def build_topo(v):
+  if v not in visited:
+    visited.add(v)
+    for child in v._prev:
+      build_topo(child)
+    topo.append(v)
+build_topo(o)</code></pre>
+
+  <p>Eight lines, and the whole correctness argument sits in where <span class="mono">topo.append(v)</span> is placed: <em>after</em> the loop over children, not before. A node is only added once every one of its children is already in the list, which makes the invariant "everything to my left in this list is something I depend on" true by induction. The <span class="mono">visited</span> set gives each node exactly one entry no matter how many consumers it has, so the backward pass costs one closure call per node — linear in the size of the graph, not exponential in its depth. Print the list on the neuron and <span class="mono">o</span> is last, <span class="mono">n</span> second to last, the leaves first.</p>
+
+  <p>Two things this implementation does not handle, worth knowing before you reuse it: it is recursive, so a deep enough graph (a long unrolled loop, say) will hit Python's recursion limit, and it assumes acyclicity rather than detecting a violation. Neither matters for the lecture. Both are why real frameworks use an explicit stack.</p>
+
+  <h2>backward(), hidden inside Value</h2>
+
+  <p>The last manual step is calling <span class="mono">_backward()</span> in a loop, so that gets folded into a public method on <span class="mono">Value</span>. The naming convention is now doing real work: <span class="mono">_backward</span> with the underscore is <em>one node's</em> chain-rule step, <span class="mono">backward</span> without it is <em>the whole graph's</em> pass.</p>
+
+  <pre class="code-block"><code>def backward(self):
+
+  topo = []
+  visited = set()
+  def build_topo(v):
+    if v not in visited:
+      visited.add(v)
+      for child in v._prev:
+        build_topo(child)
+      topo.append(v)
+  build_topo(self)
+
+  self.grad = 1.0
+  for node in reversed(topo):
+    node._backward()</code></pre>
+
+  <p>Three moves, in this order: build the schedule starting from whatever node you called it on; seed that node's gradient at 1.0; walk the schedule in reverse, calling each node's stored step. Note <span class="mono">self.grad = 1.0</span> is a plain assignment, deliberately — it is a base case, not a contribution — while everything inside the closures accumulates. And note that the topological sort starts at <span class="mono">self</span>, not at some global root: <span class="mono">backward()</span> only ever touches the subgraph that the node you called it on actually depends on. Call it on an intermediate node and you get derivatives of <em>that</em> node with respect to its ancestors, which is occasionally exactly what you want for debugging.</p>
+
+  <p>At this point <span class="mono">o.backward()</span> reproduces the entire table above in one call, and P3's twenty-odd cells of hand-typed chain rule are obsolete.</p>
+
+  <h2>The bug: a node used twice</h2>
+
+  <p>Everything so far has been tested on graphs where each value is consumed exactly once, and that hid a genuine error. The smallest case that exposes it:</p>
+
+  <pre class="code-block"><code>a = Value(3.0, label='a')
+b = a + a   ; b.label = 'b'
+b.backward()</code></pre>
+
+  <p>The forward pass is right: <span class="mono">b.data</span> is 6.0. The gradient is not. High-school calculus says the derivative of a + a with respect to a is 2. The engine reports 1.</p>
+
+  <p>The cause is one line down in the addition closure, and it is <em>not</em> the <span class="mono">_prev</span> set collapsing the two edges into one — that is a red herring people reliably chase. Inside <span class="mono">__add__</span>, <span class="mono">self</span> and <span class="mono">other</span> are bound to the same object. With plain assignment, the closure body writes <span class="mono">a.grad = 1.0</span> and then immediately writes <span class="mono">a.grad = 1.0</span> again to the same attribute. The second write does not add to the first; it replaces it. Two contributions of 1 arrive and one survives.</p>
+
+  <p>The second example makes the same failure look less like a curiosity. Take a shared input feeding two different operations that then merge:</p>
+
+  <pre class="code-block"><code>a = Value(-2.0, label='a')
+b = Value(3.0, label='b')
+d = a * b    ; d.label = 'd'
+e = a + b    ; e.label = 'e'
+f = d * e    ; f.label = 'f'
+
+f.backward()</code></pre>
+
+  <p>Both <span class="mono">a</span> and <span class="mono">b</span> reach <span class="mono">f</span> along two distinct paths, through the product and through the sum. Whichever of <span class="mono">d</span> or <span class="mono">e</span> happens to run its closure last simply overwrites what the other one deposited, so the answer is not merely wrong, it depends on the iteration order of a <span class="mono">set</span>:</p>
+
+  <table class="kv">
+    <tr><th>node</th><th>data</th><th>correct grad</th><th>with plain assignment</th></tr>
+    <tr><td>f = d * e</td><td>−6.0</td><td>1.0</td><td>1.0</td></tr>
+    <tr><td>d = a * b</td><td>−6.0</td><td>e.data = 1.0</td><td>1.0</td></tr>
+    <tr><td>e = a + b</td><td>1.0</td><td>d.data = −6.0</td><td>−6.0</td></tr>
+    <tr><td>a</td><td>−2.0</td><td>b·1 + 1·(−6) = <b>−3.0</b></td><td>3.0 (only the product path survives)</td></tr>
+    <tr><td>b</td><td>3.0</td><td>a·1 + 1·(−6) = <b>−8.0</b></td><td>−2.0 (only the product path survives)</td></tr>
+  </table>
+
+  <p>The mathematics being violated is the multivariate chain rule. When a variable influences the output through several routes, the total derivative is the <em>sum</em> of the derivatives along each route. Nothing in the code was expressing that sum.</p>
+
+  <blockquote class="q off">the solution there is basically that we have to accumulate these gradients these gradients add
+    <span class="cite">Andrej Karpathy, <a href="https://youtu.be/VMj-3S1tku0?t=5103" target="_blank" rel="noopener">85:03 ↗</a> (auto-captions)</span>
+  </blockquote>
+
+  <p>So every <span class="mono">=</span> inside every closure becomes <span class="mono">+=</span>. The fix is correct precisely because <span class="mono">grad</span> is initialized to 0.0 in the constructor: zero is the identity for addition, so a node used exactly once still ends up with exactly the value the old code gave it, while a node used <em>n</em> times collects all <em>n</em> contributions. With <span class="mono">+=</span> in place, <span class="mono">a + a</span> gives 2.0 and the diamond gives −3.0 and −8.0 — the numbers the calculus predicts. It also silently makes <span class="mono">a * a</span> work: the closure fires twice against the same object and lands on 2·a, which is the derivative of a².</p>
+
+  <div class="callout off">Carry away three things, and the rest of the lecture is bookkeeping. <b>(1)</b> A backward step is always <em>local derivative × upstream gradient</em> — the node only needs to know its own operation, never the shape of the graph around it. <b>(2)</b> Ordering is a scheduling problem with a standard solution: reverse topological order, so nothing propagates before its own gradient is complete. <b>(3)</b> Gradients accumulate. The <span class="mono">+=</span> is the multivariate chain rule expressed as a mutation, and it is the reason PyTorch's <span class="mono">.grad</span> also accumulates — which is exactly why you have to remember to zero it between training steps, a mistake that costs Karpathy a visible detour in <a class="lnk" href="p07.html">P7</a>.</div>
+
+  <h2 id="code">The code at the end of this part</h2>
+
+  <pre class="code-block"><code>class Value:
+
+  def __init__(self, data, _children=(), _op='', label=''):
+    self.data = data
+    self.grad = 0.0
+    self._backward = lambda: None
+    self._prev = set(_children)
+    self._op = _op
+    self.label = label
+
+  def __repr__(self):
+    return f"Value(data={self.data})"
+
+  def __add__(self, other):
+    out = Value(self.data + other.data, (self, other), '+')
+
+    def _backward():
+      self.grad += 1.0 * out.grad
+      other.grad += 1.0 * out.grad
+    out._backward = _backward
+
+    return out
+
+  def __mul__(self, other):
+    out = Value(self.data * other.data, (self, other), '*')
+
+    def _backward():
+      self.grad += other.data * out.grad
+      other.grad += self.data * out.grad
+    out._backward = _backward
+
+    return out
+
+  def tanh(self):
+    x = self.data
+    t = (math.exp(2*x) - 1)/(math.exp(2*x) + 1)
+    out = Value(t, (self, ), 'tanh')
+
+    def _backward():
+      self.grad += (1 - t**2) * out.grad
+    out._backward = _backward
+
+    return out
+
+  def backward(self):
+
+    topo = []
+    visited = set()
+    def build_topo(v):
+      if v not in visited:
+        visited.add(v)
+        for child in v._prev:
+          build_topo(child)
+        topo.append(v)
+    build_topo(self)
+
+    self.grad = 1.0
+    for node in reversed(topo):
+      node._backward()</code></pre>
+
+  <p>Line by line against the shipped library, which is almost identical: the constructor's <span class="mono">_backward = lambda: None</span> and <span class="mono">_prev = set(_children)</span> are <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L5-L11" target="_blank" rel="noopener">engine.py L5–L11</a> — the library drops <span class="mono">label</span>, which only ever existed to make <span class="mono">draw_dot</span> readable. The addition closure is <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L13-L22" target="_blank" rel="noopener">L13–L22</a>, where the redundant <span class="mono">1.0 *</span> is dropped and a coercion line (<span class="mono">other if isinstance(other, Value) else Value(other)</span>) is added so you can write <span class="mono">x + 1</span>; that coercion is built in <a class="lnk" href="p05.html">P5</a>. The multiplication closure is <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L24-L33" target="_blank" rel="noopener">L24–L33</a>, unchanged. <span class="mono">backward()</span> including <span class="mono">build_topo</span> is <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L54-L70" target="_blank" rel="noopener">L54–L70</a>, character-for-character the same logic. The one method here with no counterpart in the library is <span class="mono">tanh</span> — the shipped engine offers <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L45-L52" target="_blank" rel="noopener">ReLU</a> and <a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py#L35-L43" target="_blank" rel="noopener">pow</a> instead, whose closures follow the identical local-derivative-times-<span class="mono">out.grad</span> template. That template is the whole extension mechanism: to add an operation to micrograd you write a forward line and a closure, and the scheduler needs no changes at all.</p>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"Why does a plus just copy the gradient?"</b> Because ∂(a+b)/∂a = 1 and ∂(a+b)/∂b = 1 — shifting one addend by ε shifts the sum by exactly ε regardless of what the other addend is. Multiplying the upstream gradient by 1 is a no-op, so a plus node distributes its gradient unchanged to every input. The mirror-image confusion is at the times node: the local derivative there is the <em>other</em> operand's <span class="mono">data</span>, so the two inputs' gradients get each other's forward values. If you find yourself writing <span class="mono">self.grad += self.data * out.grad</span>, you have swapped them.</li>
+    <li><b>"Why can't the closure be called the moment I reach the node?"</b> Because the node's own <span class="mono">grad</span> may not be finished. In a graph where <span class="mono">a</span> feeds both <span class="mono">d</span> and <span class="mono">e</span>, <span class="mono">a.grad</span> is only complete after both <span class="mono">d._backward()</span> and <span class="mono">e._backward()</span> have run. Propagating from <span class="mono">a</span> after only one of them means everything upstream of <span class="mono">a</span> gets a fraction of the truth, permanently. Reverse topological order is the cheapest schedule that makes "my gradient is final when my turn comes" true for every node simultaneously.</li>
+    <li><b>"Doesn't <span class="mono">+=</span> double-count on ordinary graphs?"</b> No, and the reason is the initialization. <span class="mono">grad</span> starts at 0.0, and each consumer of a node contributes exactly once per backward pass, so a node with one consumer gets 0 + its single contribution — identical to what assignment produced. The failure mode <span class="mono">+=</span> <em>does</em> introduce is calling <span class="mono">backward()</span> twice on the same graph without resetting: the second pass adds to the first and you get doubled gradients. That is the same trap as forgetting <span class="mono">zero_grad()</span> in PyTorch, and it is the bug that bites in <a class="lnk" href="p07.html">P7</a>'s training loop.</li>
+    <li><b>"Is the <span class="mono">_prev</span> set the reason <span class="mono">a + a</span> was wrong?"</b> No. The set does deduplicate the two edges, which affects the picture <span class="mono">draw_dot</span> draws and means the node is visited once by <span class="mono">build_topo</span>, but the gradient error happens strictly inside the closure body, where <span class="mono">self</span> and <span class="mono">other</span> are the same object and the second write clobbers the first. Change <span class="mono">=</span> to <span class="mono">+=</span> and the set stays exactly as it is while the answer becomes correct.</li>
+    <li><b>"Why store a function instead of a string like <span class="mono">'+'</span> and switch on it?"</b> You could — that is roughly what a tape-based or graph-compiled autograd does, and it buys you the ability to inspect and optimize the backward graph. The closure form buys something else: the captured variables. <span class="mono">t</span> in the tanh closure, <span class="mono">other.data</span> in the multiply, are forward-pass intermediates that would otherwise have to be stashed and looked up. In exchange, micrograd's backward pass is opaque — you cannot print it, differentiate it again, or run it on a GPU.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://github.com/karpathy/micrograd/blob/master/micrograd/engine.py" target="_blank" rel="noopener">micrograd/engine.py</a> — Andrej Karpathy (2020) · The finished version of everything in this part: the <span class="mono">_backward</span> closures at L13–L52 and <span class="mono">backward()</span> at L54–L70, in 94 lines total. Read it after the lecture cells and the diff is startlingly small.</li>
+    <li><a href="https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/micrograd/micrograd_lecture_first_half_roughly.ipynb" target="_blank" rel="noopener">micrograd_lecture_first_half_roughly.ipynb</a> — Andrej Karpathy (2022) · The actual notebook from the video, including the by-hand <span class="mono">_backward()</span> calls and both bug-demonstration cells; run them yourself before and after changing <span class="mono">+=</span> back to <span class="mono">=</span>.</li>
+    <li><a href="https://pytorch.org/docs/stable/notes/autograd.html" target="_blank" rel="noopener">Autograd mechanics</a> — PyTorch documentation · <span class="tag wb">field map extra</span> The production version of the same three ideas — a recorded DAG, a reverse traversal, and accumulation into <span class="mono">.grad</span> — plus what micrograd omits: graph freeing, retain_graph, and in-place-operation hazards. Read it alongside <a href="https://pytorch.org/docs/stable/generated/torch.Tensor.backward.html" target="_blank" rel="noopener">torch.Tensor.backward</a>, which spells out that gradients are accumulated into the leaves and that a non-scalar output needs an explicit <span class="mono">gradient</span> argument — the generalization of <span class="mono">self.grad = 1.0</span>.</li>
+    <li><a href="https://cs231n.github.io/optimization-2/" target="_blank" rel="noopener">CS231n: Backpropagation, Intuitions</a> — Andrej Karpathy / Stanford CS231n · <span class="tag wb">field map extra</span> The same author's earlier written treatment, with the "add gate is a distributor, multiply gate is a switcher" framing and an explicit section on gradients adding at branches.</li>
+    <li><a href="https://en.wikipedia.org/wiki/Topological_sorting" target="_blank" rel="noopener">Topological sorting</a> — Wikipedia · <span class="tag wb">field map extra</span> The reference Karpathy points at rather than deriving. The DFS-with-postorder algorithm in the article is exactly <span class="mono">build_topo</span>; Kahn's algorithm is the iterative alternative worth knowing for deep graphs.</li>
+    <li><a href="https://www.nature.com/articles/323533a0" target="_blank" rel="noopener">Learning representations by back-propagating errors</a> — Rumelhart, Hinton &amp; Williams (1986) · <span class="tag wb">field map extra</span> The paper that made this algorithm famous. Two pages; the update rule and the summation over outgoing connections are the ancestors of the <span class="mono">+=</span>.</li>
+    <li><a href="https://arxiv.org/abs/1502.05767" target="_blank" rel="noopener">Automatic Differentiation in Machine Learning: a Survey</a> — Baydin, Pearlmutter, Radul &amp; Siskind (2015) · <span class="tag wb">field map extra</span> Where micrograd sits in the taxonomy: reverse-mode AD, operator overloading, define-by-run. Also explains why reverse mode is the right choice when you have one output and many inputs.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Break it on purpose, then prove the fix</b><span class="code">code</span> — Copy the class above, change all five <span class="mono">+=</span> back to <span class="mono">=</span>, and run the diamond (<span class="mono">a = Value(-2.0)</span>, <span class="mono">b = Value(3.0)</span>, <span class="mono">d = a*b</span>, <span class="mono">e = a+b</span>, <span class="mono">f = d*e</span>). Then write a numerical gradient check: a function that bumps one leaf's <span class="mono">data</span> by h = 1e-6, rebuilds the expression, and returns (f₂ − f₁)/h. A good answer shows the check agreeing with the <span class="mono">+=</span> version to about five decimals on both <span class="mono">a</span> and <span class="mono">b</span> (−3.0 and −8.0) and disagreeing with the <span class="mono">=</span> version, and states in one sentence why the assignment version's answer is order-dependent rather than merely wrong. This numeric-vs-analytic check is the same tool section 1 of <a href="https://colab.research.google.com/drive/1FPTx1RXtBfc4MaTkf7viZZD4U2F9gtKN?usp=sharing" target="_blank" rel="noopener">the official exercise Colab</a> asks you to build, so doing it here front-loads that section.</li>
+    <li><b>Make the topological sort iterative</b><span class="code">code</span> — Replace the recursive <span class="mono">build_topo</span> with an explicit stack so it survives deep graphs. Build a test: a chain of 10,000 additions (<span class="mono">v = v + Value(1.0)</span> in a loop), call <span class="mono">backward()</span>, and confirm the recursive version raises <span class="mono">RecursionError</span> while yours returns a gradient of 1.0 on the original leaf. A good answer keeps the same postorder semantics — a node is emitted only after all its children — and says how you verified that, e.g. by asserting for every node that its index in <span class="mono">topo</span> is greater than all of its children's.</li>
+    <li><b>Instrument the schedule</b> — Wrap each closure so it records the node it fired on, then run <span class="mono">backward()</span> on the neuron from this part and on the diamond. Check three invariants: every node's <span class="mono">_backward</span> ran exactly once; no node fired before all of its consumers had fired; and calling <span class="mono">backward()</span> a second time without resetting doubles every gradient. A good answer explains the third result in terms of <span class="mono">+=</span> plus the missing zeroing step, and predicts what that would do to a training loop.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p05.html">P05 Breaking up tanh, more operations, and the same thing in PyTorch</a> · Back to the <a class="lnk" href="../index.html#backprop">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "building micrograd" (2022), part 04. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>
