@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>micrograd, Mapped — Karpathy's backprop lecture as a field map</title>
+<meta name="description" content="A field map of Andrej Karpathy's 'The spelled-out intro to neural networks and backpropagation: building micrograd': eight explainer parts linked into the video by timestamp, the code annotated, a cleaned transcript, exercises." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="paper.css" />
+<style>
+  main{max-width:960px}
+  .hero{padding:24px 0 8px}
+  .hero h1{font-size:clamp(32px,5.5vw,52px);line-height:1.05;margin:10px 0 14px;letter-spacing:-.01em}
+  .hero .sub{font-size:18px;color:var(--ink-dim);max-width:720px;line-height:1.55}
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:26px 0 8px}
+  .fact{border:1px solid var(--line-soft);border-radius:8px;padding:12px 14px}
+  .fact .k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-dim)}
+  .fact .v{font-size:20px;font-weight:600;margin-top:4px}
+  section{padding:56px 0;border-bottom:1px solid var(--line-soft);scroll-margin-top:64px}
+  section:last-of-type{border-bottom:none}
+  .arc-head{display:flex;align-items:baseline;gap:14px;margin:0 0 6px}
+  .arc-head .idx{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.14em;color:var(--ink-dim)}
+  .arc-head h2{margin:0;font-size:26px}
+  .arc-sub{color:var(--ink-dim);margin:0 0 22px;max-width:680px}
+  .row{display:grid;grid-template-columns:44px 1fr;gap:14px;padding:16px 0;border-top:1px solid var(--line-soft);align-items:start}
+  .row:first-of-type{border-top:none}
+  .row .num{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink-dim);padding-top:3px}
+  .row .name{font-weight:600;font-size:17px;line-height:1.3}
+  .row .name a{color:var(--ink)}
+  .row .meta{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-dim);margin:4px 0 6px;display:flex;flex-wrap:wrap;gap:10px}
+  .row .desc{color:var(--ink-dim);font-size:14.5px;line-height:1.55}
+  .amber .row .name a:hover{color:var(--off)} .cyan .row .name a:hover{color:var(--def)}
+  .check{width:16px;height:16px;border:1px solid var(--ink-dim);border-radius:4px;display:inline-block;vertical-align:-3px;margin-right:6px;cursor:pointer;background:transparent}
+  .check.on{background:var(--off);border-color:var(--off)}
+  .cyan .check.on{background:var(--def);border-color:var(--def)}
+  .ex{padding-left:1.25em}
+  .ex li{margin:10px 0;line-height:1.6}
+  .links{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+  .links a{display:block;border:1px solid var(--line-soft);border-radius:8px;padding:12px 14px;color:var(--ink);text-decoration:none}
+  .links a:hover{border-color:var(--def)}
+  .links a b{display:block;font-size:15px;margin-bottom:3px}
+  .links a span{font-size:13px;color:var(--ink-dim)}
+  .progress{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);margin-top:8px}
+</style>
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>MICROGRAD&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="https://idvorkin-ai-tools.github.io/">← all maps</a>
+</div></header>
+<main>
+  <div class="hero">
+    <div class="eyebrow"><span class="box wb mono">ANDREJ KARPATHY · 2022 · ZERO TO HERO #1</span><span class="mono">2 h 25 min · 22 chapters · 8 parts here</span></div>
+    <h1>micrograd, mapped</h1>
+    <p class="sub">Karpathy builds a scalar autograd engine from an empty notebook, backpropagates through it by hand until the rule is obvious, then automates it, wraps it in Neuron, Layer and MLP, and trains a network by hand. This map splits the lecture into eight parts you can read before, during or after watching: what each stretch answers, the worked numbers, the code it arrives at, where people get stuck, and exercises. Every timestamp opens the video at that moment.</p>
+    <div class="facts">
+      <div class="fact"><div class="k">Watch</div><div class="v"><a class="lnk" href="https://youtu.be/VMj-3S1tku0" target="_blank" rel="noopener">youtu.be/VMj-3S1tku0</a></div></div>
+      <div class="fact"><div class="k">Code</div><div class="v"><a class="lnk" href="https://github.com/karpathy/micrograd" target="_blank" rel="noopener">micrograd</a></div></div>
+      <div class="fact"><div class="k">Notebooks</div><div class="v"><a class="lnk" href="https://github.com/karpathy/nn-zero-to-hero/tree/master/lectures/micrograd" target="_blank" rel="noopener">lecture cells</a></div></div>
+      <div class="fact"><div class="k">Transcript</div><div class="v"><a class="lnk" href="transcript.html">cleaned, timestamped</a></div></div>
+    </div>
+    <p class="progress" id="progress">Tick a part when you've worked through it; this browser remembers.</p>
+  </div>
+
+  <section id="derivatives" class="amber">
+    <div class="arc-head"><span class="idx">01 · 00:00–32:10</span><h2>Derivatives, and a data structure that remembers</h2></div>
+    <p class="arc-sub">What a derivative measures, numerically, before any calculus; then a Value object that records how every number was made, so the graph of an expression can be drawn and, later, walked backwards.</p>
+    <div class="row"><div class="num"><span class="check" data-p="p01"></span>P1</div><div><div class="name"><a href="parts/p01.html">What micrograd is, and what a derivative is</a></div><div class="meta"><a class="lnk" href="https://youtu.be/VMj-3S1tku0?t=0" target="_blank" rel="noopener">▶ 00:00</a><span>19 min</span><span>intro · micrograd overview · derivative of one input · derivative with several inputs</span></div><div class="desc">Why a 100-line engine is enough to train a neural net, what the slope of f(x) = 3x² − 4x + 5 at a point means, and the bump-it-by-h experiment that defines the derivative for the whole lecture.</div></div></div>
+    <div class="row"><div class="num"><span class="check" data-p="p02"></span>P2</div><div><div class="name"><a href="parts/p02.html">The Value object and the expression graph</a></div><div class="meta"><a class="lnk" href="https://youtu.be/VMj-3S1tku0?t=1149" target="_blank" rel="noopener">▶ 19:09</a><span>13 min</span><span>Value with data, _prev, _op · __add__ and __mul__ · draw_dot with graphviz</span></div><div class="desc">A number that knows its children and the operation that produced it, and the picture of an expression as a directed graph that the rest of the lecture is drawn on.</div></div></div>
+  </section>
+
+  <section id="backprop" class="amber">
+    <div class="arc-head"><span class="idx">02 · 32:10–103:55</span><h2>Backpropagation, by hand and then automated</h2></div>
+    <p class="arc-sub">The heart of the lecture. Gradients computed manually node by node until the chain rule is obvious; then a _backward closure per operation, a topological sort, a bug when a value is used twice, and the same thing checked against PyTorch.</p>
+    <div class="row"><div class="num"><span class="check" data-p="p03"></span>P3</div><div><div class="name"><a href="parts/p03.html">Backpropagation by hand: an expression, then a neuron</a></div><div class="meta"><a class="lnk" href="https://youtu.be/VMj-3S1tku0?t=1930" target="_blank" rel="noopener">▶ 32:10</a><span>37 min</span><span>manual backprop #1 · one optimization step, previewed · manual backprop #2: a neuron with tanh</span></div><div class="desc">Filling in grad from the output backwards, the local-derivative-times-upstream rule stated and checked numerically, and one nudge of the inputs that makes the loss move the way the gradients promised.</div></div></div>
+    <div class="row"><div class="num"><span class="check" data-p="p04"></span>P4</div><div><div class="name"><a href="parts/p04.html">Automating backward: per-op closures, topological order, and the accumulation bug</a></div><div class="meta"><a class="lnk" href="https://youtu.be/VMj-3S1tku0?t=4142" target="_blank" rel="noopener">▶ 69:02</a><span>18 min</span><span>_backward for + × tanh · backward() over a topological sort · the b = a + a bug</span></div><div class="desc">Each operation stores how to push a gradient to its inputs, backward() visits nodes in reverse topological order, and gradients must accumulate with += or a value used twice gets the wrong answer.</div></div></div>
+    <div class="row"><div class="num"><span class="check" data-p="p05"></span>P5</div><div><div class="name"><a href="parts/p05.html">Breaking up tanh, more operations, and the same thing in PyTorch</a></div><div class="meta"><a class="lnk" href="https://youtu.be/VMj-3S1tku0?t=5225" target="_blank" rel="noopener">▶ 87:05</a><span>17 min</span><span>exp, division as pow, subtraction, radd/rmul · tanh rebuilt from exp · PyTorch tensors give the same gradients</span></div><div class="desc">The level of abstraction is a choice: tanh can be one node or a composition of exp and division and the gradients agree; PyTorch does the same with tensors and requires_grad.</div></div></div>
+  </section>
+
+  <section id="nets" class="cyan">
+    <div class="arc-head"><span class="idx">03 · 103:55–136:46</span><h2>A neural net, trained by hand</h2></div>
+    <p class="arc-sub">Neuron, Layer and MLP on top of Value; a four-example dataset; a mean-squared-error loss; the parameters collected; and gradient descent stepped manually, including the classic mistake of not zeroing the gradients.</p>
+    <div class="row"><div class="num"><span class="check" data-p="p06"></span>P6</div><div><div class="name"><a href="parts/p06.html">An MLP in micrograd: Neuron, Layer, MLP, a tiny dataset, the loss, the parameters</a></div><div class="meta"><a class="lnk" href="https://youtu.be/VMj-3S1tku0?t=6235" target="_blank" rel="noopener">▶ 103:55</a><span>17 min</span><span>Neuron · Layer · MLP([3,4,4,1]) · four examples · mean squared error · parameters()</span></div><div class="desc">Forty-one parameters in three lines of classes, a loss that is itself a Value so backward() reaches every weight, and the moment the graph of the whole network is drawn.</div></div></div>
+    <div class="row"><div class="num"><span class="check" data-p="p07"></span>P7</div><div><div class="name"><a href="parts/p07.html">Training by hand: gradient descent, the learning rate, the zero-grad mistake</a></div><div class="meta"><a class="lnk" href="https://youtu.be/VMj-3S1tku0?t=7272" target="_blank" rel="noopener">▶ 121:12</a><span>16 min</span><span>p.data += −lr × p.grad · overshooting · forgetting to zero grads · the loop · summary</span></div><div class="desc">Forward, backward, update, repeat; why the loss can go up; the bug where stale gradients accumulate across steps; and Karpathy's summary of how this scales to modern networks.</div></div></div>
+  </section>
+
+  <section id="real" class="cyan">
+    <div class="arc-head"><span class="idx">04 · 136:46–145:52</span><h2>The real code</h2></div>
+    <p class="arc-sub">The finished micrograd repository read top to bottom, then a dig into PyTorch's own backward for tanh to show it is the same rule in C++.</p>
+    <div class="row"><div class="num"><span class="check" data-p="p08"></span>P8</div><div><div class="name"><a href="parts/p08.html">The real code: micrograd on GitHub, PyTorch's tanh backward, what comes next</a></div><div class="meta"><a class="lnk" href="https://youtu.be/VMj-3S1tku0?t=8206" target="_blank" rel="noopener">▶ 136:46</a><span>9 min</span><span>engine.py · nn.py · the demo notebook · PyTorch's tanh_backward · conclusion</span></div><div class="desc">Where every lecture cell lives in the repo, what the library adds (ReLU, pow, the moons demo), and the line in PyTorch that computes 1 − tanh² just like the notebook did.</div></div></div>
+  </section>
+
+  <section id="exercises">
+    <div class="arc-head"><span class="idx">05</span><h2>The exercise</h2></div>
+    <p class="arc-sub">Karpathy sets one, in the video description: a Colab notebook you should be able to complete after the lecture. Each part above also sets its own smaller exercises.</p>
+    <ol class="ex">
+      <li><b>The official exercise notebook.</b> <a class="lnk" href="https://colab.research.google.com/drive/1FPTx1RXtBfc4MaTkf7viZZD4U2F9gtKN?usp=sharing" target="_blank" rel="noopener">Open the Colab</a>: derive the gradient of a function analytically and numerically, extend Value with the operations needed for a softmax-and-negative-log-likelihood loss, and verify against PyTorch. Sections map to <a class="lnk" href="parts/p01.html">P1</a>, <a class="lnk" href="parts/p05.html">P5</a> and <a class="lnk" href="parts/p07.html">P7</a>.</li>
+      <li><b>Next in the series.</b> <a class="lnk" href="https://youtu.be/PaCmpygFfXo" target="_blank" rel="noopener">makemore part 1</a> builds a bigram character model on this foundation; the seventh video is mapped at <a class="lnk" href="https://idvorkin-ai-tools.github.io/build-gpt-field-map/" target="_blank" rel="noopener">Let's build GPT, mapped</a>.</li>
+    </ol>
+  </section>
+
+  <section id="refs">
+    <div class="arc-head"><span class="idx">06</span><h2>Sources</h2></div>
+    <div class="links">
+      <a href="https://youtu.be/VMj-3S1tku0" target="_blank" rel="noopener"><b>The lecture</b><span>Andrej Karpathy, 16 Aug 2022, 2 h 25 min, 4M views</span></a>
+      <a href="https://github.com/karpathy/micrograd" target="_blank" rel="noopener"><b>micrograd</b><span>the finished engine (engine.py, nn.py), tests and the moons demo</span></a>
+      <a href="https://github.com/karpathy/nn-zero-to-hero/tree/master/lectures/micrograd" target="_blank" rel="noopener"><b>The lecture notebooks</b><span>the cells he types, first half and second half, roughly</span></a>
+      <a href="https://colab.research.google.com/drive/1FPTx1RXtBfc4MaTkf7viZZD4U2F9gtKN?usp=sharing" target="_blank" rel="noopener"><b>The exercise Colab</b><span>from the video description</span></a>
+      <a href="https://www.youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ" target="_blank" rel="noopener"><b>Neural Networks: Zero to Hero</b><span>the series this opens</span></a>
+      <a href="https://idvorkin-ai-tools.github.io/build-gpt-field-map/" target="_blank" rel="noopener"><b>Let's build GPT, mapped</b><span>the seventh video of the series, same treatment</span></a>
+    </div>
+  </section>
+</main>
+<footer>Original explanation of Andrej Karpathy's "building micrograd" (2022). The lecture and code are his; this map links, it does not copy. Built 2026-09-05.</footer>
+<script>
+(function(){
+  var KEY='micrograd-progress';var st={};try{st=JSON.parse(localStorage.getItem(KEY)||'{}')}catch(e){}
+  var boxes=document.querySelectorAll('.check');
+  function render(){var n=0;boxes.forEach(function(b){var on=!!st[b.dataset.p];b.classList.toggle('on',on);if(on)n++});
+    var p=document.getElementById('progress');if(p)p.textContent=n?n+' of 8 parts done. Tick a part when you have worked through it; this browser remembers.':'Tick a part when you have worked through it; this browser remembers.'}
+  boxes.forEach(function(b){b.addEventListener('click',function(){st[b.dataset.p]=!st[b.dataset.p];try{localStorage.setItem(KEY,JSON.stringify(st))}catch(e){}render()})});
+  render();
+})();
+</script>
+</body>
+</html>
